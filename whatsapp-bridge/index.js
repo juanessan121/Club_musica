@@ -11,7 +11,7 @@ const PORT = process.env.PORT || 3002;
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--user-data-dir=/tmp']
     }
 });
 
