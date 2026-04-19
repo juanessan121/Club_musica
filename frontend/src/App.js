@@ -20,6 +20,15 @@ function App() {
     fecha_fin: ''
   });
 
+  const [socioForm, setSocioForm] = useState({
+    nombre_completo: '',
+    email_institucional: '',
+    telefono_whatsapp: '',
+    instrumento_principal: ''
+  });
+  
+  const [socioMensaje, setSocioMensaje] = useState('');
+
   useEffect(() => {
     if (currentUser) {
       fetchData();
@@ -96,6 +105,41 @@ function App() {
     });
   };
 
+  const handleSocioInputChange = (e) => {
+    setSocioForm({
+      ...socioForm,
+      [e.target.name]: e.target.value
+    });
+  };
+
+  const handleAgregarSocio = async (e) => {
+    e.preventDefault();
+    try {
+      const response = await fetch(`${API_URL}/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(socioForm)
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        setSocioMensaje(`Éxito: ${data.message}`);
+        setSocioForm({
+          nombre_completo: '',
+          email_institucional: '',
+          telefono_whatsapp: '',
+          instrumento_principal: ''
+        });
+        fetchData(); // Recargar usuarios
+      } else {
+        setSocioMensaje(`Error: ${data.error}`);
+      }
+    } catch (error) {
+      setSocioMensaje('Error de conexión con la API');
+    }
+  };
+
   const handleReservar = async (e) => {
     e.preventDefault();
     try {
@@ -135,8 +179,8 @@ function App() {
         <h2>🎸 Plataforma Club de Música</h2>
         <p>Inicia sesión con tu correo institucional.</p>
         <p style={{ fontSize: '0.85em', color: 'gray' }}>
-          *Admin de prueba: juan.sandoval@universidad.edu <br/>
-          *Usuario de prueba: javier.herrada@universidad.edu
+          *Admin de prueba: juan.sandoval@pucesa.edu.ec <br/>
+          *Usuario de prueba: javier.herrada@pucesa.edu.ec
         </p>
         
         {loginError && <div style={{ color: 'red', marginBottom: '1rem' }}>{loginError}</div>}
@@ -150,7 +194,7 @@ function App() {
               onChange={(e) => setLoginEmail(e.target.value)} 
               required 
               style={{ width: '100%', padding: '0.5rem', marginTop: '0.5rem' }} 
-              placeholder="nombre@universidad.edu"
+              placeholder="nombre@pucesa.edu.ec"
             />
           </label>
           <button type="submit" style={{ padding: '0.8rem', background: '#2563eb', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
@@ -269,6 +313,46 @@ function App() {
               </button>
             </form>
           </section>
+
+          {/* FORMULARIO AGREGAR SOCIO (SOLO ADMIN) */}
+          {isAdmin && (
+            <section style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '8px', border: '1px solid #e2e8f0', marginTop: '2rem' }}>
+              <h2>Agregar Nuevo Socio</h2>
+              <p style={{ fontSize: '0.9em', color: 'gray' }}>Registra un nuevo miembro del club.</p>
+
+              {socioMensaje && (
+                <div style={{ padding: '1rem', background: socioMensaje.includes('Éxito') ? '#dcfce7' : '#fee2e2', color: socioMensaje.includes('Éxito') ? '#166534' : '#991b1b', marginBottom: '1rem', borderRadius: '4px' }}>
+                  {socioMensaje}
+                </div>
+              )}
+              
+              <form onSubmit={handleAgregarSocio} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <label>
+                  Nombre Completo:
+                  <input type="text" name="nombre_completo" value={socioForm.nombre_completo} onChange={handleSocioInputChange} required style={{ width: '100%', padding: '0.5rem', marginTop: '0.3rem' }} />
+                </label>
+
+                <label>
+                  Correo Institucional (@pucesa.edu.ec):
+                  <input type="email" name="email_institucional" value={socioForm.email_institucional} onChange={handleSocioInputChange} required pattern=".*@pucesa\.edu\.ec$" title="Debe terminar en @pucesa.edu.ec" placeholder="ejemplo@pucesa.edu.ec" style={{ width: '100%', padding: '0.5rem', marginTop: '0.3rem' }} />
+                </label>
+
+                <label>
+                  Teléfono (WhatsApp, incluir código país):
+                  <input type="text" name="telefono_whatsapp" value={socioForm.telefono_whatsapp} onChange={handleSocioInputChange} required placeholder="+593..." style={{ width: '100%', padding: '0.5rem', marginTop: '0.3rem' }} />
+                </label>
+
+                <label>
+                  Instrumento Principal:
+                  <input type="text" name="instrumento_principal" value={socioForm.instrumento_principal} onChange={handleSocioInputChange} required style={{ width: '100%', padding: '0.5rem', marginTop: '0.3rem' }} />
+                </label>
+
+                <button type="submit" style={{ padding: '1rem', background: '#059669', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 'bold', borderRadius: '4px', marginTop: '0.5rem' }}>
+                  Registrar Socio
+                </button>
+              </form>
+            </section>
+          )}
         </div>
 
       </div>

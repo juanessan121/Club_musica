@@ -79,9 +79,9 @@ CREATE TABLE Logs_Auditoria (
 
 -- Datos de prueba
 INSERT INTO Users (nombre_completo, email_institucional, telefono_whatsapp, instrumento_principal, nivel_habilidad) VALUES
-    ('Juan Sandoval', 'juan.sandoval@universidad.edu', '+56912345678', 'Guitarra', 'avanzado'),
-    ('Braulio Silva', 'braulio.silva@universidad.edu', '+56912345679', 'Bajo', 'intermedio'),
-    ('Javier Herrada', 'javier.herrada@universidad.edu', '+56912345680', 'Batería', 'avanzado');
+    ('Juan Sandoval', 'juan.sandoval@pucesa.edu.ec', '+56912345678', 'Guitarra', 'avanzado'),
+    ('Braulio Silva', 'braulio.silva@pucesa.edu.ec', '+56912345679', 'Bajo', 'intermedio'),
+    ('Javier Herrada', 'javier.herrada@pucesa.edu.ec', '+56912345680', 'Batería', 'avanzado');
 
 INSERT INTO Inventario (nombre, tipo, marca, modelo, estado, stock, ubicacion) VALUES
     ('Fender Stratocaster', 'Guitarra Eléctrica', 'Fender', 'Stratocaster', 'excelente', 1, 'Sala 1'),

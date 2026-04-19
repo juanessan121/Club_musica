@@ -41,7 +41,7 @@ def login():
             user = cursor.fetchone()
             if user:
                 # Consideramos a Juan Sandoval como administrador para la prueba
-                is_admin = (user['email_institucional'] == 'juan.sandoval@universidad.edu')
+                is_admin = (user['email_institucional'] == 'juan.sandoval@pucesa.edu.ec')
                 return jsonify({"user": user, "is_admin": is_admin}), 200
             else:
                 return jsonify({"error": "Usuario no encontrado"}), 404
@@ -53,14 +53,34 @@ def login():
 # =============================================================================
 # USERS
 # =============================================================================
-@app.route('/api/users', methods=['GET'])
-def get_users():
+@app.route('/api/users', methods=['GET', 'POST'])
+def get_or_create_users():
     conn = get_db_connection()
     try:
+        if request.method == 'POST':
+            data = request.json
+            nombre_completo = data.get('nombre_completo')
+            email_institucional = data.get('email_institucional')
+            telefono_whatsapp = data.get('telefono_whatsapp')
+            instrumento_principal = data.get('instrumento_principal')
+
+            if not email_institucional.endswith('@pucesa.edu.ec'):
+                return jsonify({"error": "El correo debe pertenecer al dominio @pucesa.edu.ec"}), 400
+
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO Users (nombre_completo, email_institucional, telefono_whatsapp, instrumento_principal) VALUES (%s, %s, %s, %s)",
+                    (nombre_completo, email_institucional, telefono_whatsapp, instrumento_principal)
+                )
+                conn.commit()
+                return jsonify({"message": "Socio agregado exitosamente"}), 201
+
         with conn.cursor() as cursor:
             cursor.execute("SELECT * FROM Users")
             result = cursor.fetchall()
             return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
     finally:
         conn.close()
 
