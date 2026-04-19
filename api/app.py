@@ -87,14 +87,33 @@ def get_or_create_users():
 # =============================================================================
 # INVENTARIO
 # =============================================================================
-@app.route('/api/inventario', methods=['GET'])
-def get_inventario():
+@app.route('/api/inventario', methods=['GET', 'POST'])
+def get_or_create_inventario():
     conn = get_db_connection()
     try:
+        if request.method == 'POST':
+            data = request.json
+            nombre = data.get('nombre')
+            tipo = data.get('tipo')
+            marca = data.get('marca', '')
+            modelo = data.get('modelo', '')
+            estado = data.get('estado', 'excelente')
+            ubicacion = data.get('ubicacion')
+            
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO Inventario (nombre, tipo, marca, modelo, estado, ubicacion) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (nombre, tipo, marca, modelo, estado, ubicacion)
+                )
+                conn.commit()
+                return jsonify({"message": "Instrumento agregado exitosamente"}), 201
+                
         with conn.cursor() as cursor:
             cursor.execute("SELECT * FROM Inventario")
             result = cursor.fetchall()
             return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
     finally:
         conn.close()
 
