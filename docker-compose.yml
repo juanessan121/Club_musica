@@ -93,6 +93,7 @@ services:
     restart: unless-stopped
     environment:
       - REACT_APP_API_URL=http://localhost/api
+      - PORT=3001
     ports:
       - "${WEB_PORT:-3001}:3001"
     volumes:
