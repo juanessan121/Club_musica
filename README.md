@@ -10,7 +10,7 @@ Este proyecto fue refactorizado para utilizar **Python (Flask)**, **MariaDB** y 
 
 1. **Clonar el repositorio:**
    ```bash
-   git clone https://github.com/TU_USUARIO/NOMBRE_DEL_REPO.git
+   git clone[ https://github.com/TU_USUARIO/NOMBRE_DEL_REPO.git](https://github.com/juanessan121/Club_musica/tree/main)
    cd "Plataforma club de musica"
 2.
 Copiar las variables de entorno:
