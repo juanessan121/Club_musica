@@ -15,22 +15,25 @@
 |----|-------------|
 | RF-01.1 | Registrar socio con nivel de habilidad e instrumento principal |
 | RF-01.2 | Consultar disponibilidad de instrumentos en tiempo real |
-| RF-01.3 | Registrar préstamo de instrumento con fecha/hora de salida |
-| RF-01.4 | Registrar devolución de instrumento con validación de estado |
-| RF-01.5 | Notificar vencimiento de préstamo (máximo 7 días) |
-| RF-01.6 | Generar reporte de historial de préstamos por socio |
-| RF-01.7 | Bloquear socio con préstamos vencidos o instrumentos dañados |
+| RF-01.3 | Registrar préstamo de instrumento exclusivo para eventos dentro de la universidad (duración por horas) |
+| RF-01.4 | Especificar en la solicitud online el documento físico a entregar como garantía (ej. Cédula de Identidad) |
+| RF-01.5 | Checkbox obligatorio para aceptar términos y condiciones de responsabilidad del instrumento |
+| RF-01.6 | Registrar devolución de instrumento con validación de estado |
+| RF-01.7 | Notificar vencimiento de préstamo |
+| RF-01.8 | Generar reporte de historial de préstamos por socio |
+| RF-01.9 | Bloquear socio con préstamos vencidos o instrumentos dañados |
 
 #### RF-02: Reservas de Salas de Ensayo
 | ID | Descripción |
 |----|-------------|
 | RF-02.1 | Consultar disponibilidad de salas por fecha y hora |
 | RF-02.2 | Reservar sala con validación de no superposición de horarios |
-| RF-02.3 | Cancelar reserva con liberación automática del horario |
-| RF-02.4 | Validar que socio no tenga reservas activas superpuestas |
-| RF-02.5 | Permitir reservas recurrentes (semanales/mensuales) |
-| RF-02.6 | Notificar recordatorio de reserva 24 horas antes |
-| RF-02.7 | Registrar inasistencia y aplicar penalización (3 faltas = bloqueo 30 días) |
+| RF-02.3 | Checkbox obligatorio para aceptar términos y condiciones de uso de la sala |
+| RF-02.4 | Cancelar reserva con liberación automática del horario |
+| RF-02.5 | Validar que socio no tenga reservas activas superpuestas |
+| RF-02.6 | Permitir reservas recurrentes (semanales/mensuales) |
+| RF-02.7 | Notificar recordatorio de reserva 24 horas antes |
+| RF-02.8 | Registrar inasistencia y aplicar penalización (3 faltas = bloqueo 30 días) |
 
 #### RF-03: Gestión de Setlists para Eventos
 | ID | Descripción |
@@ -89,7 +92,7 @@ flowchart TD
     I -->|Sí| K[Validar estado físico del instrumento]
     K --> L[Registrar préstamo: fecha, socio, instrumento]
     L --> M[Entregar instrumento al socio]
-    M --> N[Programar recordatorio de devolución +7 días]
+    M --> N[Programar recordatorio de devolución según horas solicitadas]
     N --> G
 ```
 
@@ -275,7 +278,7 @@ erDiagram
 |---------|-------------|-------------------|
 | SOCIO | Miembro registrado del club | Único por email, estado bloqueado impide nuevas operaciones |
 | INSTRUMENTO | Activo físico del club | Solo disponible si estado = DISPONIBLE |
-| PRESTAMO | Transacción de préstamo | Máximo 7 días, notificación al día 5 |
+| PRESTAMO | Transacción de préstamo | Solo para eventos dentro de la universidad, máximo en horas |
 | SALA | Espacio físico de ensayo | Capacidad define máximo de ocupantes |
 | RESERVA | Reserva de horario | No superposición, máximo 3 reservas/semana por socio |
 | EVENTO | Presentación musical | Puede tener múltiples bandas |
@@ -527,3 +530,5 @@ gantt
 
 *Documento generado para la asignatura de Ingeniería Empresarial*  
 *Universidad - Plataforma Club de Música*
+
+*Ingeniero DenDennys Mauricio Coronel Vallejo*
