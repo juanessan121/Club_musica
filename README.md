@@ -1,3 +1,38 @@
+# Plataforma Club de Música
+
+Este proyecto fue refactorizado para utilizar **Python (Flask)**, **MariaDB** y **React**, junto con un microservicio puente para notificaciones de **WhatsApp**.
+
+## Requisitos
+- [Docker](https://docs.docker.com/get-docker/) y [Docker Compose](https://docs.docker.com/compose/install/) instalados.
+- [Git](https://git-scm.com/)
+
+## Cómo levantar el entorno (Desarrollo)
+
+1. **Clonar el repositorio:**
+   ```bash
+   git clone https://github.com/TU_USUARIO/NOMBRE_DEL_REPO.git
+   cd "Plataforma club de musica"
+2.
+Copiar las variables de entorno:
+cp .env.example .env
+(Asegúrate de llenar en el .env las credenciales requeridas, como la base de datos o cuentas de correo si planean probarlas localmente).
+3.
+Levantar los servicios con Docker Compose:
+docker compose up --build -d
+4.
+Verificar los servicios:
+◦
+Frontend (React): Abre tu navegador en http://localhost:3001
+◦
+Backend API (Flask): Disponible en http://localhost:5000/api/health
+◦
+WhatsApp Bridge: Ve los logs con docker logs club-musica-whatsapp-bridge para escanear el código QR desde tu celular.
+◦
+Base de Datos (MariaDB): Disponible en el puerto 3306. La base de datos y las tablas de prueba se inicializan automáticamente con schema_musica.sql.
+Detener el entorno
+Para detener el proyecto y apagar los contenedores, ejecuta:
+docker compose down
+(Tus datos de MariaDB persistirán en un volumen local)
 # Sistema de Gestión - Club de Música
 
 **Autores:** Juan Sandoval, Braulio Silva, Javier Herrada  

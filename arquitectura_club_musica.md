@@ -51,9 +51,21 @@
 | RNF-02 | Soporte para 500 usuarios concurrentes |
 | RNF-03 | Disponibilidad 99.5% en horario de ensayos (8:00 - 22:00) |
 | RNF-04 | Backup automático de base de datos cada 24 horas |
-| RNF-05 | Autenticación segura con encriptación de contraseñas (bcrypt) |
+| RNF-05 | Diseño responsive para acceso móvil |
 | RNF-06 | API RESTful documentada con OpenAPI/Swagger |
-| RNF-07 | Diseño responsive para acceso móvil |
+
+### 1.3 Requerimientos No Funcionales de Seguridad
+
+| ID | Descripción |
+|----|-------------|
+| SEG-01 | Autenticación segura con hash de contraseñas utilizando salt (ej. bcrypt, Argon2) en la base de datos |
+| SEG-02 | Uso estricto de HTTPS (TLS 1.2 o superior) para cifrar datos en tránsito entre cliente y servidor |
+| SEG-03 | Protección contra inyección SQL mediante el uso de consultas preparadas o un ORM seguro |
+| SEG-04 | Prevención de ataques Cross-Site Scripting (XSS) sanitizando todas las entradas del usuario y salidas al navegador |
+| SEG-05 | Implementación de tokens JWT con firmas criptográficas seguras y tiempos de expiración cortos para sesiones |
+| SEG-06 | Mitigación de fuerza bruta en endpoints de login mediante Rate Limiting (ej. bloqueo tras 5 intentos fallidos) |
+| SEG-07 | Auditoría de acciones críticas y registros de seguridad almacenados de manera inmutable (Logs_Auditoria) |
+| SEG-08 | Configuración de cabeceras de seguridad HTTP (CORS estricto, Content-Security-Policy, X-Frame-Options) |
 
 ---
 

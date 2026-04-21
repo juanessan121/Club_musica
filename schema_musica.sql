@@ -17,6 +17,8 @@ CREATE TABLE Users (
     nombre_completo VARCHAR(150) NOT NULL,
     email_institucional VARCHAR(100) UNIQUE NOT NULL,
     telefono_whatsapp VARCHAR(20) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    password_salt VARCHAR(255) NOT NULL,
     instrumento_principal VARCHAR(50),
     nivel_habilidad ENUM('principiante', 'intermedio', 'avanzado', 'profesional') DEFAULT 'principiante',
     fecha_registro TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -78,10 +80,10 @@ CREATE TABLE Logs_Auditoria (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Datos de prueba
-INSERT INTO Users (nombre_completo, email_institucional, telefono_whatsapp, instrumento_principal, nivel_habilidad) VALUES
-    ('Juan Sandoval', 'juan.sandoval@pucesa.edu.ec', '+56912345678', 'Guitarra', 'avanzado'),
-    ('Braulio Silva', 'braulio.silva@pucesa.edu.ec', '+56912345679', 'Bajo', 'intermedio'),
-    ('Javier Herrada', 'javier.herrada@pucesa.edu.ec', '+56912345680', 'Batería', 'avanzado');
+INSERT INTO Users (nombre_completo, email_institucional, telefono_whatsapp, password_hash, password_salt, instrumento_principal, nivel_habilidad) VALUES
+    ('Juan Sandoval', 'juan.sandoval@pucesa.edu.ec', '+56912345678', 'hash_ejemplo_1', 'salt_ejemplo_1', 'Guitarra', 'avanzado'),
+    ('Braulio Silva', 'braulio.silva@pucesa.edu.ec', '+56912345679', 'hash_ejemplo_2', 'salt_ejemplo_2', 'Bajo', 'intermedio'),
+    ('Javier Herrada', 'javier.herrada@pucesa.edu.ec', '+56912345680', 'hash_ejemplo_3', 'salt_ejemplo_3', 'Batería', 'avanzado');
 
 INSERT INTO Inventario (nombre, tipo, marca, modelo, estado, stock, ubicacion) VALUES
     ('Fender Stratocaster', 'Guitarra Eléctrica', 'Fender', 'Stratocaster', 'excelente', 1, 'Sala 1'),

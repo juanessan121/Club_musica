@@ -56,8 +56,12 @@ app.post('/send', async (req, res) => {
         // Simular un delay aleatorio para evitar bloqueos (Prevención de bloqueo)
         const delay = Math.floor(Math.random() * 3000) + 1000;
         setTimeout(async () => {
-            await client.sendMessage(formattedNumber, message);
-            console.log(`Message sent to ${number}`);
+            try {
+                await client.sendMessage(formattedNumber, message);
+                console.log(`Message sent to ${number}`);
+            } catch (err) {
+                console.error(`Failed to send message to ${number}: ${err.message}`);
+            }
         }, delay);
         
         return res.status(200).json({ status: "Message queued for delivery" });
