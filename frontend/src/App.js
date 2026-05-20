@@ -1,559 +1,692 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Music, Calendar, Plus, X, LogOut, CheckCircle2, AlertCircle, Clock, MapPin, Tag, Activity } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Activity,
+  CalendarDays,
+  CheckCircle2,
+  DoorOpen,
+  Gauge,
+  Guitar,
+  LogOut,
+  PackageCheck,
+  Plus,
+  RefreshCw,
+  Users,
+  XCircle,
+} from 'lucide-react';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost/api';
+function resolveApiUrl() {
+  const configured = process.env.REACT_APP_API_URL;
+  if (configured && configured !== 'http://localhost/api') return configured;
+  if (window.location.port === '3001') return 'http://localhost:5000/api';
+  return `${window.location.origin}/api`;
+}
 
-// --- ANIMATION VARIANTS ---
-const fadeUp = {
-  hidden: { opacity: 0, y: 20 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" } }
+const API_URL = resolveApiUrl();
+const DEFAULT_PASSWORD = 'Musica2026!';
+
+const navItems = [
+  { id: 'dashboard', label: 'Dashboard', icon: Gauge, adminOnly: false },
+  { id: 'reservas', label: 'Reservas', icon: CalendarDays, adminOnly: false },
+  { id: 'prestamos', label: 'Préstamos', icon: PackageCheck, adminOnly: false },
+  { id: 'inventario', label: 'Inventario', icon: Guitar, adminOnly: false },
+  { id: 'socios', label: 'Socios', icon: Users, adminOnly: true },
+  { id: 'salas', label: 'Salas', icon: DoorOpen, adminOnly: true },
+];
+
+const emptyReserva = {
+  user_id: '',
+  sala_id: '',
+  fecha_inicio: '',
+  fecha_fin: '',
+  terminos_aceptados: true,
 };
 
-const staggerContainer = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: { staggerChildren: 0.1 }
-  }
+const emptyPrestamo = {
+  user_id: '',
+  inventario_id: '',
+  evento_universidad: '',
+  documento_garantia: 'Cédula de Identidad',
+  fecha_limite: '',
+  terminos_aceptados: true,
 };
 
-const modalOverlay = {
-  hidden: { opacity: 0 },
-  visible: { opacity: 1 }
+const emptySocio = {
+  nombre_completo: '',
+  email_institucional: '',
+  telefono_whatsapp: '',
+  nivel_habilidad: 'PRINCIPIANTE',
+  rol: 'SOCIO',
+  password: DEFAULT_PASSWORD,
 };
 
-const modalSlide = {
-  hidden: { x: '100%', opacity: 0 },
-  visible: { x: 0, opacity: 1, transition: { type: "spring", damping: 25, stiffness: 200 } },
-  exit: { x: '100%', opacity: 0, transition: { ease: "easeInOut" } }
+const emptyInstrumento = {
+  nombre: '',
+  tipo: 'Guitarra Eléctrica',
+  marca: '',
+  modelo: '',
+  numero_serie: '',
+  estado: 'DISPONIBLE',
+  ubicacion: '',
 };
 
-// --- HELPER COMPONENTS ---
-const Badge = ({ children, type }) => {
-  const styles = {
-    excelente: 'bg-green-100 text-green-800 border-green-200',
-    bueno: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-    regular: 'bg-orange-100 text-orange-800 border-orange-200',
-    dañado: 'bg-red-100 text-red-800 border-red-200',
-    confirmada: 'bg-green-100 text-green-800 border-green-200',
-    pendiente: 'bg-yellow-100 text-yellow-800 border-yellow-200',
-    default: 'bg-gray-100 text-gray-800 border-gray-200',
-  };
-  const colorClass = styles[type?.toLowerCase()] || styles.default;
+const emptySala = {
+  nombre: '',
+  tipo: 'CUBICULO',
+  capacidad: 4,
+  estado: 'ACTIVA',
+};
+
+function Badge({ value }) {
+  const key = String(value || 'default').toLowerCase();
+  return <span className={`badge badge-${key}`}>{value || 'N/D'}</span>;
+}
+
+function Field({ label, children }) {
   return (
-    <span style={{ fontSize: '0.75rem', fontWeight: 600, padding: '0.25rem 0.6rem', borderRadius: '9999px', border: '1px solid', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }} className={colorClass}>
+    <label className="field">
+      <span>{label}</span>
       {children}
-    </span>
+    </label>
   );
-};
+}
 
-const Input = ({ label, ...props }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '1rem' }}>
-    <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#475569', marginLeft: '0.2rem' }}>{label}</label>
-    <input 
-      className="focus-ring"
-      style={{ 
-        padding: '0.75rem 1rem', 
-        borderRadius: '12px', 
-        border: '1px solid #e2e8f0',
-        backgroundColor: '#f8fafc',
-        fontSize: '0.95rem',
-        color: '#1e293b',
-        transition: 'all 0.2s ease'
-      }} 
-      {...props} 
-    />
-  </div>
-);
+function TextInput(props) {
+  return <input className="input" {...props} />;
+}
 
-const Select = ({ label, children, ...props }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginBottom: '1rem' }}>
-    <label style={{ fontSize: '0.85rem', fontWeight: 600, color: '#475569', marginLeft: '0.2rem' }}>{label}</label>
-    <select 
-      className="focus-ring"
-      style={{ 
-        padding: '0.75rem 1rem', 
-        borderRadius: '12px', 
-        border: '1px solid #e2e8f0',
-        backgroundColor: '#f8fafc',
-        fontSize: '0.95rem',
-        color: '#1e293b',
-        transition: 'all 0.2s ease',
-        appearance: 'none',
-        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23475569' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,
-        backgroundRepeat: 'no-repeat',
-        backgroundPosition: 'right 1rem center',
-        backgroundSize: '1em'
-      }} 
-      {...props} 
-    >
-      {children}
-    </select>
-  </div>
-);
+function SelectInput(props) {
+  return <select className="input" {...props} />;
+}
+
+function Message({ message }) {
+  if (!message.text) return null;
+  const Icon = message.type === 'success' ? CheckCircle2 : XCircle;
+  return (
+    <div className={`message ${message.type}`}>
+      <Icon size={18} />
+      <span>{message.text}</span>
+    </div>
+  );
+}
+
+function formatDate(value) {
+  if (!value) return 'Sin fecha';
+  return value.replace('T', ' ').slice(0, 16);
+}
 
 export default function App() {
-  const [inventario, setInventario] = useState([]);
-  const [users, setUsers] = useState([]);
-  const [userReservations, setUserReservations] = useState([]);
-  const [mensaje, setMensaje] = useState({ text: '', type: '' });
-  const [isLoading, setIsLoading] = useState(false);
-
-  // Sesión
   const [currentUser, setCurrentUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginError, setLoginError] = useState('');
+  const [activeView, setActiveView] = useState('dashboard');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState({ text: '', type: '' });
+  const [login, setLogin] = useState({ email: 'juan.sandoval@pucesa.edu.ec', password: DEFAULT_PASSWORD });
 
-  // Formularios
-  const [reservaForm, setReservaForm] = useState({ user_id: '', fecha_inicio: '', fecha_fin: '' });
-  const [socioForm, setSocioForm] = useState({ nombre_completo: '', email_institucional: '', telefono_whatsapp: '', instrumento_principal: '' });
-  const [socioMensaje, setSocioMensaje] = useState({ text: '', type: '' });
+  const [stats, setStats] = useState(null);
+  const [usersList, setUsersList] = useState([]);
+  const [inventario, setInventario] = useState([]);
+  const [salas, setSalas] = useState([]);
+  const [reservas, setReservas] = useState([]);
+  const [calendarEvents, setCalendarEvents] = useState([]);
+  const [prestamos, setPrestamos] = useState([]);
 
-  const [instrumentoForm, setInstrumentoForm] = useState({ nombre: '', tipo: 'Guitarra', estado: 'excelente', ubicacion: '' });
-  const [showInstrumentModal, setShowInstrumentModal] = useState(false);
+  const [reservaForm, setReservaForm] = useState(emptyReserva);
+  const [prestamoForm, setPrestamoForm] = useState(emptyPrestamo);
+  const [socioForm, setSocioForm] = useState(emptySocio);
+  const [instrumentoForm, setInstrumentoForm] = useState(emptyInstrumento);
+  const [salaForm, setSalaForm] = useState(emptySala);
+
+  const visibleNav = useMemo(() => navItems.filter((item) => !item.adminOnly || isAdmin), [isAdmin]);
+  const availableInstruments = inventario.filter((item) => item.disponible && item.estado === 'DISPONIBLE');
+
+  async function api(path, options = {}) {
+    const response = await fetch(`${API_URL}${path}`, {
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      ...options,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Error de servidor');
+    return data;
+  }
+
+  async function loadData(user = currentUser, admin = isAdmin) {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const baseRequests = [
+        api('/dashboard/stats').then(setStats),
+        api('/inventario').then(setInventario),
+        api('/salas').then(setSalas),
+        api('/reservas/calendario').then(setCalendarEvents),
+        api('/prestamos').then(setPrestamos),
+      ];
+      if (admin) {
+        baseRequests.push(api('/users').then(setUsersList));
+        baseRequests.push(api('/reservas').then(setReservas));
+      } else {
+        baseRequests.push(api(`/reservas/${user.id}`).then(setReservas));
+      }
+      await Promise.all(baseRequests);
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    if (currentUser) {
-      fetchData();
-      if (!isAdmin) {
-        fetchUserReservations(currentUser.id);
-        setReservaForm(prev => ({ ...prev, user_id: currentUser.id }));
-      }
-    }
+    if (currentUser) loadData(currentUser, isAdmin);
   }, [currentUser, isAdmin]);
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    setLoginError('');
-    setIsLoading(true);
+  async function handleLogin(event) {
+    event.preventDefault();
+    setLoading(true);
+    setMessage({ text: '', type: '' });
     try {
-      const response = await fetch(`${API_URL}/login`, {
+      const data = await api('/auth/login', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: loginEmail })
+        body: JSON.stringify(login),
       });
-      const data = await response.json();
-      if (response.ok) {
-        setCurrentUser(data.user);
-        setIsAdmin(data.is_admin);
-      } else {
-        setLoginError(data.error);
-      }
-    } catch (error) {
-      setLoginError('Error de conexión con el servidor.');
+      setCurrentUser(data.user);
+      setIsAdmin(Boolean(data.is_admin));
+      setReservaForm({ ...emptyReserva, user_id: data.user.id });
+      setPrestamoForm({ ...emptyPrestamo, user_id: data.user.id });
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
-  };
+  }
 
-  const handleLogout = () => {
+  function logout() {
     setCurrentUser(null);
     setIsAdmin(false);
-    setLoginEmail('');
-    setInventario([]);
-    setUsers([]);
-    setUserReservations([]);
-    setMensaje({ text: '', type: '' });
-    setReservaForm({ user_id: '', fecha_inicio: '', fecha_fin: '' });
-  };
+    setActiveView('dashboard');
+    setMessage({ text: '', type: '' });
+  }
 
-  const fetchData = async () => {
+  async function submitReserva(event) {
+    event.preventDefault();
     try {
-      const invResponse = await fetch(`${API_URL}/inventario`);
-      setInventario(await invResponse.json());
-
-      if (isAdmin) {
-        const userResponse = await fetch(`${API_URL}/users`);
-        setUsers(await userResponse.json());
-      }
-    } catch (error) {
-      console.error('Error fetching data:', error);
-    }
-  };
-
-  const fetchUserReservations = async (userId) => {
-    try {
-      const response = await fetch(`${API_URL}/reservas/${userId}`);
-      setUserReservations(await response.json());
-    } catch (error) {
-      console.error('Error fetching reservations:', error);
-    }
-  };
-
-  const handleReservar = async (e) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setMensaje({ text: '', type: '' });
-    try {
-      const response = await fetch(`${API_URL}/reservas`, {
+      await api('/reservas', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(reservaForm)
+        body: JSON.stringify({ ...reservaForm, user_id: isAdmin ? reservaForm.user_id : currentUser.id }),
       });
-      const data = await response.json();
-      if (response.ok) {
-        setMensaje({ text: '¡Reserva confirmada! Revisa tu WhatsApp.', type: 'success' });
-        setReservaForm(prev => ({ user_id: isAdmin ? '' : prev.user_id, fecha_inicio: '', fecha_fin: '' }));
-        if (!isAdmin) fetchUserReservations(currentUser.id);
-      } else {
-        setMensaje({ text: data.error, type: 'error' });
-      }
-    } catch (error) {
-      setMensaje({ text: 'Error de conexión', type: 'error' });
-    } finally {
-      setIsLoading(false);
+      setMessage({ text: 'Reserva registrada correctamente.', type: 'success' });
+      setReservaForm({ ...emptyReserva, user_id: isAdmin ? '' : currentUser.id });
+      await loadData();
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
     }
-  };
+  }
 
-  const handleAgregarSocio = async (e) => {
-    e.preventDefault();
-    setSocioMensaje({ text: '', type: '' });
+  async function cancelReserva(id) {
     try {
-      const response = await fetch(`${API_URL}/users`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(socioForm)
-      });
-      const data = await response.json();
-      if (response.ok) {
-        setSocioMensaje({ text: 'Socio registrado exitosamente.', type: 'success' });
-        setSocioForm({ nombre_completo: '', email_institucional: '', telefono_whatsapp: '', instrumento_principal: '' });
-        fetchData();
-      } else {
-        setSocioMensaje({ text: data.error, type: 'error' });
-      }
-    } catch (error) {
-      setSocioMensaje({ text: 'Error de red', type: 'error' });
+      await api(`/reservas/${id}`, { method: 'DELETE' });
+      setMessage({ text: 'Reserva cancelada.', type: 'success' });
+      await loadData();
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
     }
-  };
+  }
 
-  const handleAgregarInstrumento = async (e) => {
-    e.preventDefault();
+  async function submitPrestamo(event) {
+    event.preventDefault();
     try {
-      const response = await fetch(`${API_URL}/inventario`, {
+      await api('/prestamos/solicitar', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(instrumentoForm)
+        body: JSON.stringify({ ...prestamoForm, user_id: isAdmin ? prestamoForm.user_id : currentUser.id }),
       });
-      if (response.ok) {
-        setShowInstrumentModal(false);
-        setInstrumentoForm({ nombre: '', tipo: 'Guitarra', estado: 'excelente', ubicacion: '' });
-        fetchData();
-      }
-    } catch (error) {
-      console.error(error);
+      setMessage({ text: 'Préstamo registrado correctamente.', type: 'success' });
+      setPrestamoForm({ ...emptyPrestamo, user_id: isAdmin ? '' : currentUser.id });
+      await loadData();
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
     }
-  };
+  }
 
-  // --- LOGIN VIEW ---
+  async function devolverPrestamo(id) {
+    try {
+      await api(`/prestamos/${id}/devolver`, { method: 'POST', body: JSON.stringify({ estado_instrumento: 'DISPONIBLE' }) });
+      setMessage({ text: 'Instrumento marcado como devuelto.', type: 'success' });
+      await loadData();
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
+    }
+  }
+
+  async function submitSocio(event) {
+    event.preventDefault();
+    try {
+      await api('/users', { method: 'POST', body: JSON.stringify(socioForm) });
+      setSocioForm(emptySocio);
+      setMessage({ text: 'Socio creado correctamente.', type: 'success' });
+      await loadData();
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
+    }
+  }
+
+  async function submitInstrumento(event) {
+    event.preventDefault();
+    try {
+      await api('/inventario', { method: 'POST', body: JSON.stringify(instrumentoForm) });
+      setInstrumentoForm(emptyInstrumento);
+      setMessage({ text: 'Instrumento creado correctamente.', type: 'success' });
+      await loadData();
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
+    }
+  }
+
+  async function submitSala(event) {
+    event.preventDefault();
+    try {
+      await api('/salas', { method: 'POST', body: JSON.stringify(salaForm) });
+      setSalaForm(emptySala);
+      setMessage({ text: 'Sala creada correctamente.', type: 'success' });
+      await loadData();
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
+    }
+  }
+
   if (!currentUser) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%)', position: 'relative', overflow: 'hidden' }}>
-        {/* Decoraciones de fondo */}
-        <div style={{ position: 'absolute', top: '-10%', left: '-10%', width: '400px', height: '400px', background: 'rgba(255,255,255,0.1)', borderRadius: '50%', filter: 'blur(50px)' }} />
-        <div style={{ position: 'absolute', bottom: '-10%', right: '-10%', width: '500px', height: '500px', background: 'rgba(96, 165, 250, 0.2)', borderRadius: '50%', filter: 'blur(60px)' }} />
-        
-        <motion.div 
-          initial={{ opacity: 0, scale: 0.95, y: 20 }} 
-          animate={{ opacity: 1, scale: 1, y: 0 }} 
-          transition={{ duration: 0.6, ease: "easeOut" }}
-          className="glass-panel"
-          style={{ padding: '3rem', borderRadius: '24px', width: '100%', maxWidth: '440px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)', position: 'relative', zIndex: 10 }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1.5rem' }}>
-            <div style={{ background: '#eff6ff', padding: '1rem', borderRadius: '20px', color: '#2563eb' }}>
-              <Music size={40} strokeWidth={1.5} />
-            </div>
-          </div>
-          <h2 style={{ textAlign: 'center', margin: '0 0 0.5rem 0', fontSize: '1.8rem', color: '#1e293b' }}>Club de Música</h2>
-          <p style={{ textAlign: 'center', color: '#64748b', marginBottom: '2rem', fontSize: '0.95rem' }}>Ingresa con tu correo institucional pucesa.edu.ec</p>
-          
-          {loginError && (
-            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#991b1b', padding: '0.75rem', borderRadius: '12px', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
-              <AlertCircle size={18} />
-              {loginError}
-            </motion.div>
-          )}
-
-          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <Input 
-              label="Correo Electrónico"
-              type="email" 
-              value={loginEmail} 
-              onChange={(e) => setLoginEmail(e.target.value)} 
-              required 
-              placeholder="nombre@pucesa.edu.ec"
-              disabled={isLoading}
-            />
-            <motion.button 
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              type="submit" 
-              disabled={isLoading}
-              style={{ padding: '0.9rem', background: '#2563eb', color: 'white', border: 'none', cursor: isLoading ? 'not-allowed' : 'pointer', fontWeight: 600, borderRadius: '12px', fontSize: '1rem', marginTop: '0.5rem', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.2)' }}
-            >
-              {isLoading ? <div className="spinner" style={{ border: '2px solid transparent', borderTopColor: 'white', borderRadius: '50%', width: '20px', height: '20px' }} /> : 'Acceder al Panel'}
-            </motion.button>
+      <main className="login-page">
+        <section className="login-panel">
+          <div className="brand-mark"><Guitar size={34} /></div>
+          <h1>Club de Música</h1>
+          <p>Gestión de socios, salas, préstamos e inventario.</p>
+          <Message message={message} />
+          <form className="form" onSubmit={handleLogin}>
+            <Field label="Correo institucional">
+              <TextInput type="email" value={login.email} onChange={(e) => setLogin({ ...login, email: e.target.value })} required />
+            </Field>
+            <Field label="Contraseña">
+              <TextInput type="password" value={login.password} onChange={(e) => setLogin({ ...login, password: e.target.value })} required />
+            </Field>
+            <button className="button primary" type="submit" disabled={loading}>
+              {loading ? 'Validando...' : 'Ingresar'}
+            </button>
           </form>
-
-          <div style={{ marginTop: '2rem', padding: '1rem', background: 'rgba(241, 245, 249, 0.5)', borderRadius: '12px', fontSize: '0.8rem', color: '#475569' }}>
-            <p style={{ margin: '0 0 0.5rem 0' }}><strong>Cuentas de prueba:</strong></p>
-            <ul style={{ margin: 0, paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
-              <li>Admin: juan.sandoval@pucesa.edu.ec</li>
-              <li>Usuario: javier.herrada@pucesa.edu.ec</li>
-            </ul>
+          <div className="hint">
+            <strong>Semilla:</strong> juan.sandoval@pucesa.edu.ec / {DEFAULT_PASSWORD}
           </div>
-        </motion.div>
-      </div>
+        </section>
+      </main>
     );
   }
 
-  // --- DASHBOARD VIEW ---
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* HEADER */}
-      <header style={{ background: 'white', borderBottom: '1px solid #e2e8f0', position: 'sticky', top: 0, zIndex: 40 }}>
-        <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '1rem 2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <div style={{ background: '#eff6ff', padding: '0.6rem', borderRadius: '12px', color: '#2563eb' }}>
-              <Music size={24} />
-            </div>
-            <div>
-              <h1 style={{ margin: 0, fontSize: '1.2rem', color: '#1e293b' }}>Club de Música</h1>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.2rem' }}>
-                <span style={{ fontSize: '0.85rem', color: '#64748b' }}>{currentUser.nombre_completo}</span>
-                {isAdmin && <Badge type="excelente">Administrador</Badge>}
-              </div>
-            </div>
-          </div>
-          
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            {isAdmin && (
-              <motion.button
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
-                onClick={() => setShowInstrumentModal(true)}
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: '#2563eb', color: 'white', border: 'none', padding: '0.6rem 1.2rem', borderRadius: '999px', fontSize: '0.9rem', fontWeight: 600, cursor: 'pointer', boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.2)' }}
-              >
-                <Plus size={18} />
-                Nuevo Instrumento
-              </motion.button>
-            )}
-            <motion.button 
-              whileHover={{ backgroundColor: '#f1f5f9' }}
-              onClick={handleLogout} 
-              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1rem', background: 'transparent', color: '#64748b', border: '1px solid #e2e8f0', cursor: 'pointer', borderRadius: '999px', fontSize: '0.9rem', fontWeight: 500, transition: 'background-color 0.2s' }}
-            >
-              <LogOut size={16} />
-              Salir
-            </motion.button>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="sidebar-brand">
+          <div className="brand-mark compact"><Guitar size={22} /></div>
+          <div>
+            <strong>Club Música</strong>
+            <span>{isAdmin ? 'Administrador' : 'Socio'}</span>
           </div>
         </div>
-      </header>
+        <nav>
+          {visibleNav.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.id} className={`nav-button ${activeView === item.id ? 'active' : ''}`} onClick={() => setActiveView(item.id)}>
+                <Icon size={18} />
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
 
-      {/* MAIN CONTENT (Bento Grid) */}
-      <main style={{ flex: 1, maxWidth: '1400px', margin: '0 auto', padding: '2rem', width: '100%' }}>
-        <motion.div 
-          variants={staggerContainer}
-          initial="hidden"
-          animate="visible"
-          style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '2rem', alignItems: 'start' }}
-        >
-          
-          {/* CATALOGO DE INSTRUMENTOS */}
-          <motion.section variants={fadeUp} style={{ background: 'white', borderRadius: '24px', padding: '1.5rem', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)', border: '1px solid #f1f5f9', gridColumn: '1 / -1' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', marginBottom: '1.5rem' }}>
-              <div style={{ background: '#f8fafc', padding: '0.6rem', borderRadius: '12px', color: '#475569' }}><Tag size={20} /></div>
-              <h2 style={{ margin: 0, fontSize: '1.25rem', color: '#1e293b' }}>Catálogo de Instrumentos</h2>
-            </div>
-            
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1rem' }}>
-              {inventario.map(item => (
-                <motion.div whileHover={{ y: -4, boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }} key={item.id} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '1.2rem', transition: 'all 0.2s ease' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.8rem' }}>
-                    <h3 style={{ margin: 0, fontSize: '1.05rem', color: '#0f172a' }}>{item.nombre}</h3>
-                    <Badge type={item.estado}>{item.estado.charAt(0).toUpperCase() + item.estado.slice(1)}</Badge>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.85rem', color: '#64748b' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><Activity size={14} /> Tipo: {item.tipo}</span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}><MapPin size={14} /> Ubic: {item.ubicacion}</span>
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-          </motion.section>
+      <section className="workspace">
+        <header className="topbar">
+          <div>
+            <h1>{visibleNav.find((item) => item.id === activeView)?.label}</h1>
+            <p>{currentUser.nombre_completo} · {currentUser.email_institucional}</p>
+          </div>
+          <div className="topbar-actions">
+            <button className="button ghost" onClick={() => loadData()} disabled={loading}>
+              <RefreshCw size={16} />
+              Actualizar
+            </button>
+            <button className="button ghost" onClick={logout}>
+              <LogOut size={16} />
+              Salir
+            </button>
+          </div>
+        </header>
 
-          {/* COLUMNA IZQ: RESERVAS DEL USUARIO (SI NO ES ADMIN) */}
-          {!isAdmin && (
-            <motion.section variants={fadeUp} style={{ background: 'white', borderRadius: '24px', padding: '1.5rem', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', border: '1px solid #f1f5f9' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', marginBottom: '1.5rem' }}>
-                <div style={{ background: '#f0fdf4', padding: '0.6rem', borderRadius: '12px', color: '#16a34a' }}><Calendar size={20} /></div>
-                <h2 style={{ margin: 0, fontSize: '1.25rem', color: '#1e293b' }}>Mis Reservas</h2>
-              </div>
-              
-              {userReservations.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#94a3b8', background: '#f8fafc', borderRadius: '16px', border: '1px dashed #e2e8f0' }}>
-                  <Calendar size={40} style={{ margin: '0 auto 1rem auto', opacity: 0.5 }} />
-                  <p style={{ margin: 0 }}>No tienes reservas agendadas.</p>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  {userReservations.map(res => (
-                    <motion.div whileHover={{ scale: 1.01 }} key={res.id} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '1.2rem', position: 'relative', overflow: 'hidden' }}>
-                      <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: '4px', background: res.estado === 'confirmada' ? '#22c55e' : '#eab308' }} />
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.8rem' }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#64748b' }}>Reserva #{res.id}</span>
-                        <Badge type={res.estado}>{res.estado.toUpperCase()}</Badge>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.9rem', color: '#334155' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Clock size={16} color="#64748b" /> <strong>Inicia:</strong> {res.fecha_inicio}</div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Clock size={16} color="#64748b" /> <strong>Termina:</strong> {res.fecha_fin}</div>
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
-            </motion.section>
-          )}
+        <Message message={message} />
 
-          {/* AGREGAR SOCIO (SOLO ADMIN) */}
-          {isAdmin && (
-            <motion.section variants={fadeUp} style={{ background: 'white', borderRadius: '24px', padding: '1.5rem', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', border: '1px solid #f1f5f9' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', marginBottom: '1.5rem' }}>
-                <div style={{ background: '#ecfdf5', padding: '0.6rem', borderRadius: '12px', color: '#059669' }}><Plus size={20} /></div>
-                <div>
-                  <h2 style={{ margin: 0, fontSize: '1.25rem', color: '#1e293b' }}>Registrar Socio</h2>
-                  <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.85rem', color: '#64748b' }}>Agrega un nuevo miembro al club</p>
-                </div>
-              </div>
-
-              {socioMensaje.text && (
-                <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} style={{ padding: '0.8rem 1rem', background: socioMensaje.type === 'success' ? '#dcfce7' : '#fee2e2', color: socioMensaje.type === 'success' ? '#166534' : '#991b1b', borderRadius: '12px', marginBottom: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
-                  {socioMensaje.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-                  {socioMensaje.text}
-                </motion.div>
-              )}
-              
-              <form onSubmit={handleAgregarSocio}>
-                <Input label="Nombre Completo" name="nombre_completo" value={socioForm.nombre_completo} onChange={(e) => setSocioForm({...socioForm, nombre_completo: e.target.value})} required placeholder="Ej. Ana Pérez" />
-                <Input label="Correo Institucional" type="email" name="email_institucional" value={socioForm.email_institucional} onChange={(e) => setSocioForm({...socioForm, email_institucional: e.target.value})} required pattern=".*@pucesa\.edu\.ec$" title="Debe terminar en @pucesa.edu.ec" placeholder="ana@pucesa.edu.ec" />
-                <Input label="Teléfono (WhatsApp)" name="telefono_whatsapp" value={socioForm.telefono_whatsapp} onChange={(e) => setSocioForm({...socioForm, telefono_whatsapp: e.target.value})} required placeholder="+593..." />
-                <Input label="Instrumento Principal" name="instrumento_principal" value={socioForm.instrumento_principal} onChange={(e) => setSocioForm({...socioForm, instrumento_principal: e.target.value})} required placeholder="Piano, Guitarra, etc." />
-                
-                <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} type="submit" style={{ width: '100%', padding: '0.9rem', background: '#059669', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 600, borderRadius: '12px', fontSize: '0.95rem', marginTop: '0.5rem' }}>
-                  Crear Socio
-                </motion.button>
-              </form>
-            </motion.section>
-          )}
-
-          {/* FORMULARIO DE RESERVA */}
-          <motion.section variants={fadeUp} style={{ background: 'white', borderRadius: '24px', padding: '1.5rem', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', border: '1px solid #f1f5f9' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.8rem', marginBottom: '1.5rem' }}>
-              <div style={{ background: '#eff6ff', padding: '0.6rem', borderRadius: '12px', color: '#2563eb' }}><Calendar size={20} /></div>
-              <div>
-                <h2 style={{ margin: 0, fontSize: '1.25rem', color: '#1e293b' }}>{isAdmin ? 'Agendar Reserva' : 'Nueva Reserva'}</h2>
-                <p style={{ margin: '0.2rem 0 0 0', fontSize: '0.85rem', color: '#64748b' }}>Confirmación instantánea vía WhatsApp</p>
-              </div>
-            </div>
-
-            {mensaje.text && (
-              <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} style={{ padding: '0.8rem 1rem', background: mensaje.type === 'success' ? '#dcfce7' : '#fee2e2', color: mensaje.type === 'success' ? '#166534' : '#991b1b', borderRadius: '12px', marginBottom: '1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
-                {mensaje.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-                {mensaje.text}
-              </motion.div>
-            )}
-            
-            <form onSubmit={handleReservar}>
-              {isAdmin && (
-                <Select label="Socio" value={reservaForm.user_id} onChange={(e) => setReservaForm({...reservaForm, user_id: e.target.value})} required>
-                  <option value="" disabled>Seleccione un socio...</option>
-                  {users.map(user => (
-                    <option key={user.id} value={user.id}>{user.nombre_completo}</option>
-                  ))}
-                </Select>
-              )}
-
-              <Input label="Fecha de Inicio" type="datetime-local" value={reservaForm.fecha_inicio} onChange={(e) => setReservaForm({...reservaForm, fecha_inicio: e.target.value})} required />
-              <Input label="Fecha de Fin" type="datetime-local" value={reservaForm.fecha_fin} onChange={(e) => setReservaForm({...reservaForm, fecha_fin: e.target.value})} required />
-
-              <motion.button 
-                whileHover={{ scale: 1.02 }} 
-                whileTap={{ scale: 0.98 }} 
-                type="submit" 
-                disabled={isLoading}
-                style={{ width: '100%', padding: '0.9rem', background: '#0f172a', color: 'white', border: 'none', cursor: isLoading ? 'not-allowed' : 'pointer', fontWeight: 600, borderRadius: '12px', fontSize: '0.95rem', marginTop: '0.5rem', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
-              >
-                {isLoading ? <div className="spinner" style={{ border: '2px solid transparent', borderTopColor: 'white', borderRadius: '50%', width: '18px', height: '18px' }} /> : 'Confirmar Reserva'}
-              </motion.button>
-            </form>
-          </motion.section>
-
-        </motion.div>
-      </main>
-
-      {/* MODAL: AGREGAR INSTRUMENTO */}
-      <AnimatePresence>
-        {showInstrumentModal && (
-          <>
-            <motion.div 
-              variants={modalOverlay}
-              initial="hidden" animate="visible" exit="hidden"
-              onClick={() => setShowInstrumentModal(false)}
-              style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.4)', backdropFilter: 'blur(4px)', zIndex: 100 }} 
-            />
-            <motion.div
-              variants={modalSlide}
-              initial="hidden" animate="visible" exit="exit"
-              style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: '100%', maxWidth: '450px', background: 'white', zIndex: 110, boxShadow: '-10px 0 25px rgba(0,0,0,0.1)', display: 'flex', flexDirection: 'column' }}
-            >
-              <div style={{ padding: '1.5rem 2rem', borderBottom: '1px solid #e2e8f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc' }}>
-                <h2 style={{ margin: 0, fontSize: '1.25rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Music size={20} className="text-blue-600" /> Nuevo Instrumento</h2>
-                <button onClick={() => setShowInstrumentModal(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#64748b', padding: '0.5rem', borderRadius: '50%', display: 'flex' }} className="hover:bg-slate-200 transition-colors">
-                  <X size={20} />
-                </button>
-              </div>
-              
-              <div style={{ padding: '2rem', overflowY: 'auto', flex: 1 }}>
-                <form onSubmit={handleAgregarInstrumento} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <Input label="Nombre del Instrumento" value={instrumentoForm.nombre} onChange={e => setInstrumentoForm({...instrumentoForm, nombre: e.target.value})} required placeholder="Ej. Fender Stratocaster" />
-                  
-                  <Select label="Tipo" value={instrumentoForm.tipo} onChange={e => setInstrumentoForm({...instrumentoForm, tipo: e.target.value})} required>
-                    <option value="Guitarra">Guitarra</option>
-                    <option value="Bajo">Bajo</option>
-                    <option value="Batería">Batería</option>
-                    <option value="Teclado">Teclado</option>
-                    <option value="Amplificador">Amplificador</option>
-                    <option value="Otro">Otro</option>
-                  </Select>
-
-                  <Select label="Estado Físico" value={instrumentoForm.estado} onChange={e => setInstrumentoForm({...instrumentoForm, estado: e.target.value})} required>
-                    <option value="excelente">Excelente</option>
-                    <option value="bueno">Bueno</option>
-                    <option value="regular">Regular</option>
-                    <option value="dañado">Dañado</option>
-                    <option value="en_mantenimiento">En Mantenimiento</option>
-                  </Select>
-
-                  <Input label="Ubicación / Sala" value={instrumentoForm.ubicacion} onChange={e => setInstrumentoForm({...instrumentoForm, ubicacion: e.target.value})} required placeholder="Ej. Sala Acústica 1" />
-
-                  <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem' }}>
-                    <motion.button whileHover={{ backgroundColor: '#f1f5f9' }} type="button" onClick={() => setShowInstrumentModal(false)} style={{ flex: 1, padding: '0.9rem', background: 'transparent', color: '#475569', border: '1px solid #cbd5e1', cursor: 'pointer', fontWeight: 600, borderRadius: '12px', fontSize: '0.95rem' }}>
-                      Cancelar
-                    </motion.button>
-                    <motion.button whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} type="submit" style={{ flex: 1, padding: '0.9rem', background: '#2563eb', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 600, borderRadius: '12px', fontSize: '0.95rem', boxShadow: '0 4px 6px -1px rgba(37, 99, 235, 0.2)' }}>
-                      Guardar
-                    </motion.button>
-                  </div>
-                </form>
-              </div>
-            </motion.div>
-          </>
+        {activeView === 'dashboard' && (
+          <Dashboard stats={stats} reservas={reservas} prestamos={prestamos} inventario={inventario} />
         )}
-      </AnimatePresence>
+        {activeView === 'reservas' && (
+          <ReservasView
+            isAdmin={isAdmin}
+            usersList={usersList}
+            salas={salas}
+            reservas={reservas}
+            calendarEvents={calendarEvents}
+            form={reservaForm}
+            setForm={setReservaForm}
+            onSubmit={submitReserva}
+            onCancel={cancelReserva}
+          />
+        )}
+        {activeView === 'prestamos' && (
+          <PrestamosView
+            isAdmin={isAdmin}
+            usersList={usersList}
+            prestamos={prestamos}
+            instrumentos={availableInstruments}
+            form={prestamoForm}
+            setForm={setPrestamoForm}
+            onSubmit={submitPrestamo}
+            onReturn={devolverPrestamo}
+          />
+        )}
+        {activeView === 'inventario' && (
+          <InventarioView
+            isAdmin={isAdmin}
+            inventario={inventario}
+            form={instrumentoForm}
+            setForm={setInstrumentoForm}
+            onSubmit={submitInstrumento}
+          />
+        )}
+        {activeView === 'socios' && (
+          <SociosView usersList={usersList} form={socioForm} setForm={setSocioForm} onSubmit={submitSocio} />
+        )}
+        {activeView === 'salas' && (
+          <SalasView salas={salas} form={salaForm} setForm={setSalaForm} onSubmit={submitSala} />
+        )}
+      </section>
+    </div>
+  );
+}
 
+function Dashboard({ stats, reservas, prestamos, inventario }) {
+  const cards = [
+    ['Socios activos', stats?.socios_activos ?? 0],
+    ['Instrumentos', stats?.instrumentos ?? inventario.length],
+    ['Salas disponibles', stats?.salas_disponibles ?? 0],
+    ['Reservas confirmadas', stats?.reservas_confirmadas ?? reservas.length],
+    ['Préstamos activos', stats?.prestamos_activos ?? prestamos.filter((p) => p.estado === 'ACTIVO').length],
+  ];
+
+  return (
+    <div className="stack">
+      <div className="metrics-grid">
+        {cards.map(([label, value]) => (
+          <article className="metric-card" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </article>
+        ))}
+      </div>
+      <section className="panel">
+        <div className="panel-title">
+          <Activity size={18} />
+          <h2>Próximas reservas</h2>
+        </div>
+        <div className="table">
+          {(stats?.proximas_reservas || reservas.slice(0, 5)).map((reserva) => (
+            <div className="row" key={reserva.id}>
+              <span>{reserva.sala_nombre}</span>
+              <span>{reserva.nombre_completo || 'Mi reserva'}</span>
+              <span>{formatDate(reserva.fecha_inicio)}</span>
+              <Badge value={reserva.estado || 'CONFIRMADA'} />
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ReservasView({ isAdmin, usersList, salas, reservas, calendarEvents, form, setForm, onSubmit, onCancel }) {
+  return (
+    <div className="two-column">
+      <section className="panel">
+        <div className="panel-title"><Plus size={18} /><h2>Nueva reserva</h2></div>
+        <form className="form" onSubmit={onSubmit}>
+          {isAdmin && (
+            <Field label="Socio">
+              <SelectInput value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value })} required>
+                <option value="">Selecciona un socio</option>
+                {usersList.map((user) => <option key={user.id} value={user.id}>{user.nombre_completo}</option>)}
+              </SelectInput>
+            </Field>
+          )}
+          <Field label="Sala">
+            <SelectInput value={form.sala_id} onChange={(e) => setForm({ ...form, sala_id: e.target.value })} required>
+              <option value="">Selecciona una sala</option>
+              {salas.filter((sala) => sala.estado === 'ACTIVA').map((sala) => (
+                <option key={sala.id} value={sala.id}>{sala.nombre} · {sala.capacidad} personas</option>
+              ))}
+            </SelectInput>
+          </Field>
+          <Field label="Inicio">
+            <TextInput type="datetime-local" value={form.fecha_inicio} onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })} required />
+          </Field>
+          <Field label="Fin">
+            <TextInput type="datetime-local" value={form.fecha_fin} onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })} required />
+          </Field>
+          <label className="checkline">
+            <input type="checkbox" checked={form.terminos_aceptados} onChange={(e) => setForm({ ...form, terminos_aceptados: e.target.checked })} />
+            Acepto las condiciones de uso de sala.
+          </label>
+          <button className="button primary" type="submit">Confirmar reserva</button>
+        </form>
+      </section>
+
+      <section className="panel wide">
+        <div className="panel-title"><CalendarDays size={18} /><h2>Calendario</h2></div>
+        <div className="calendar-list">
+          {calendarEvents.map((event) => (
+            <article className="calendar-item" key={event.id}>
+              <div>
+                <strong>{event.sala_nombre}</strong>
+                <span>{event.nombre_completo}</span>
+              </div>
+              <time>{formatDate(event.start)} - {formatDate(event.end).slice(11)}</time>
+              <Badge value={event.estado} />
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel full">
+        <div className="panel-title"><CalendarDays size={18} /><h2>Reservas registradas</h2></div>
+        <div className="table">
+          {reservas.map((reserva) => (
+            <div className="row" key={reserva.id}>
+              <span>{reserva.sala_nombre}</span>
+              <span>{reserva.nombre_completo || 'Mi reserva'}</span>
+              <span>{formatDate(reserva.fecha_inicio)} - {formatDate(reserva.fecha_fin).slice(11)}</span>
+              <Badge value={reserva.estado} />
+              {reserva.estado !== 'CANCELADA' && <button className="link-button" onClick={() => onCancel(reserva.id)}>Cancelar</button>}
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PrestamosView({ isAdmin, usersList, prestamos, instrumentos, form, setForm, onSubmit, onReturn }) {
+  return (
+    <div className="two-column">
+      <section className="panel">
+        <div className="panel-title"><PackageCheck size={18} /><h2>Registrar préstamo</h2></div>
+        <form className="form" onSubmit={onSubmit}>
+          {isAdmin && (
+            <Field label="Socio">
+              <SelectInput value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value })} required>
+                <option value="">Selecciona un socio</option>
+                {usersList.map((user) => <option key={user.id} value={user.id}>{user.nombre_completo}</option>)}
+              </SelectInput>
+            </Field>
+          )}
+          <Field label="Instrumento disponible">
+            <SelectInput value={form.inventario_id} onChange={(e) => setForm({ ...form, inventario_id: e.target.value })} required>
+              <option value="">Selecciona instrumento</option>
+              {instrumentos.map((item) => <option key={item.id} value={item.id}>{item.nombre} · {item.tipo}</option>)}
+            </SelectInput>
+          </Field>
+          <Field label="Evento universitario">
+            <TextInput value={form.evento_universidad} onChange={(e) => setForm({ ...form, evento_universidad: e.target.value })} required />
+          </Field>
+          <Field label="Fecha límite">
+            <TextInput type="datetime-local" value={form.fecha_limite} onChange={(e) => setForm({ ...form, fecha_limite: e.target.value })} required />
+          </Field>
+          <button className="button primary" type="submit">Registrar préstamo</button>
+        </form>
+      </section>
+
+      <section className="panel wide">
+        <div className="panel-title"><PackageCheck size={18} /><h2>Préstamos</h2></div>
+        <div className="table">
+          {prestamos.map((prestamo) => (
+            <div className="row" key={prestamo.id}>
+              <span>{prestamo.instrumento_nombre}</span>
+              <span>{prestamo.nombre_completo}</span>
+              <span>{formatDate(prestamo.fecha_limite)}</span>
+              <Badge value={prestamo.estado} />
+              {prestamo.estado === 'ACTIVO' && <button className="link-button" onClick={() => onReturn(prestamo.id)}>Devolver</button>}
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function InventarioView({ isAdmin, inventario, form, setForm, onSubmit }) {
+  return (
+    <div className="stack">
+      {isAdmin && (
+        <section className="panel">
+          <div className="panel-title"><Plus size={18} /><h2>Nuevo instrumento</h2></div>
+          <form className="form grid-form" onSubmit={onSubmit}>
+            <Field label="Nombre"><TextInput value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} required /></Field>
+            <Field label="Tipo"><TextInput value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })} required /></Field>
+            <Field label="Marca"><TextInput value={form.marca} onChange={(e) => setForm({ ...form, marca: e.target.value })} /></Field>
+            <Field label="Modelo"><TextInput value={form.modelo} onChange={(e) => setForm({ ...form, modelo: e.target.value })} /></Field>
+            <Field label="Serie"><TextInput value={form.numero_serie} onChange={(e) => setForm({ ...form, numero_serie: e.target.value })} /></Field>
+            <Field label="Estado">
+              <SelectInput value={form.estado} onChange={(e) => setForm({ ...form, estado: e.target.value })}>
+                <option value="DISPONIBLE">DISPONIBLE</option>
+                <option value="PRESTADO">PRESTADO</option>
+                <option value="MANTENIMIENTO">MANTENIMIENTO</option>
+                <option value="BAJA">BAJA</option>
+              </SelectInput>
+            </Field>
+            <Field label="Ubicación"><TextInput value={form.ubicacion} onChange={(e) => setForm({ ...form, ubicacion: e.target.value })} required /></Field>
+            <button className="button primary" type="submit">Guardar instrumento</button>
+          </form>
+        </section>
+      )}
+      <section className="cards-grid">
+        {inventario.map((item) => (
+          <article className="item-card" key={item.id}>
+            <div>
+              <h3>{item.nombre}</h3>
+              <p>{item.tipo} · {item.marca || 'Sin marca'} {item.modelo || ''}</p>
+            </div>
+            <Badge value={item.disponible ? 'DISPONIBLE' : 'PRESTADO'} />
+            <span>{item.ubicacion}</span>
+            <Badge value={item.estado} />
+          </article>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function SociosView({ usersList, form, setForm, onSubmit }) {
+  return (
+    <div className="two-column">
+      <section className="panel">
+        <div className="panel-title"><Users size={18} /><h2>Registrar socio</h2></div>
+        <form className="form" onSubmit={onSubmit}>
+          <Field label="Nombre completo"><TextInput value={form.nombre_completo} onChange={(e) => setForm({ ...form, nombre_completo: e.target.value })} required /></Field>
+          <Field label="Correo PUCE"><TextInput type="email" value={form.email_institucional} onChange={(e) => setForm({ ...form, email_institucional: e.target.value })} pattern=".*@pucesa\.edu\.ec$" required /></Field>
+          <Field label="WhatsApp"><TextInput value={form.telefono_whatsapp} onChange={(e) => setForm({ ...form, telefono_whatsapp: e.target.value })} required /></Field>
+          <Field label="Nivel">
+            <SelectInput value={form.nivel_habilidad} onChange={(e) => setForm({ ...form, nivel_habilidad: e.target.value })}>
+              <option value="PRINCIPIANTE">PRINCIPIANTE</option>
+              <option value="INTERMEDIO">INTERMEDIO</option>
+              <option value="AVANZADO">AVANZADO</option>
+              <option value="PROFESIONAL">PROFESIONAL</option>
+            </SelectInput>
+          </Field>
+          <Field label="Rol">
+            <SelectInput value={form.rol} onChange={(e) => setForm({ ...form, rol: e.target.value })}>
+              <option value="SOCIO">SOCIO</option>
+              <option value="ADMIN">ADMIN</option>
+            </SelectInput>
+          </Field>
+          <Field label="Contraseña inicial"><TextInput value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required /></Field>
+          <button className="button primary" type="submit">Crear socio</button>
+        </form>
+      </section>
+      <section className="panel wide">
+        <div className="panel-title"><Users size={18} /><h2>Socios</h2></div>
+        <div className="table">
+          {usersList.map((user) => (
+            <div className="row" key={user.id}>
+              <span>{user.nombre_completo}</span>
+              <span>{user.email_institucional}</span>
+              <span>{user.nivel_habilidad}</span>
+              <Badge value={user.rol} />
+              <Badge value={user.estado} />
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SalasView({ salas, form, setForm, onSubmit }) {
+  return (
+    <div className="two-column">
+      <section className="panel">
+        <div className="panel-title"><DoorOpen size={18} /><h2>Nueva sala</h2></div>
+        <form className="form" onSubmit={onSubmit}>
+          <Field label="Nombre"><TextInput value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} required /></Field>
+          <Field label="Tipo">
+            <SelectInput value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
+              <option value="CUBICULO">CUBICULO</option>
+              <option value="SALON_ACUSTICO">SALON_ACUSTICO</option>
+              <option value="ESTUDIO">ESTUDIO</option>
+            </SelectInput>
+          </Field>
+          <Field label="Capacidad"><TextInput type="number" min="1" value={form.capacidad} onChange={(e) => setForm({ ...form, capacidad: e.target.value })} required /></Field>
+          <Field label="Estado">
+            <SelectInput value={form.estado} onChange={(e) => setForm({ ...form, estado: e.target.value })}>
+              <option value="ACTIVA">ACTIVA</option>
+              <option value="MANTENIMIENTO">MANTENIMIENTO</option>
+              <option value="INACTIVA">INACTIVA</option>
+            </SelectInput>
+          </Field>
+          <button className="button primary" type="submit">Guardar sala</button>
+        </form>
+      </section>
+      <section className="cards-grid wide">
+        {salas.map((sala) => (
+          <article className="item-card" key={sala.id}>
+            <h3>{sala.nombre}</h3>
+            <p>{sala.capacidad} personas</p>
+            <Badge value={sala.estado} />
+          </article>
+        ))}
+      </section>
     </div>
   );
 }
