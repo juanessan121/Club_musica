@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Infografía 2 – Ejercicio Formas Normales | Práctica en Clase</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0e1a;
+  --card: #111827;
+  --card2: #1a2235;
+  --accent1: #00d4ff;
+  --accent2: #ff6b35;
+  --accent3: #7c3aed;
+  --accent4: #10b981;
+  --accent5: #f59e0b;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --border: #1e293b;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* ─── HERO ─── */
+.hero {
+  background: linear-gradient(135deg, #0a0e1a 0%, #0f1929 50%, #0d1117 100%);
+  border-bottom: 1px solid var(--border);
+  padding: 48px 40px 40px;
+  position: relative;
+  overflow: hidden;
+}
+.hero::before {
+  content:'';
+  position:absolute; inset:0;
+  background: radial-gradient(ellipse 80% 60% at 70% 50%, rgba(245,158,11,.08) 0%, transparent 70%),
+              radial-gradient(ellipse 50% 80% at 10% 80%, rgba(16,185,129,.07) 0%, transparent 60%);
+}
+.hero-badge {
+  display:inline-flex; align-items:center; gap:8px;
+  background: rgba(245,158,11,.1); border:1px solid rgba(245,158,11,.3);
+  border-radius:4px; padding:4px 14px; font-size:11px; letter-spacing:2px;
+  text-transform:uppercase; color:var(--accent5); margin-bottom:20px;
+}
+.hero h1 {
+  font-family:'Bebas Neue',sans-serif;
+  font-size: clamp(38px,5.5vw,72px);
+  letter-spacing:2px; line-height:1;
+  background: linear-gradient(90deg, #fff 0%, var(--accent5) 50%, var(--accent4) 100%);
+  -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+}
+.hero-sub {
+  font-size:15px; color:var(--muted); margin-top:12px; max-width:620px;
+}
+.hero-tags { display:flex; gap:10px; flex-wrap:wrap; margin-top:20px; }
+.tag {
+  background:rgba(255,255,255,.05); border:1px solid var(--border);
+  border-radius:4px; padding:4px 12px; font-size:12px; color:var(--muted);
+}
+.week-badge {
+  position:absolute; top:40px; right:40px;
+  background: var(--accent4); color:#fff;
+  font-family:'Bebas Neue',sans-serif; font-size:48px; padding:8px 20px;
+  border-radius:6px; line-height:1;
+}
+
+/* ─── LAYOUT ─── */
+.main { padding:40px; display:grid; gap:32px; }
+
+/* ─── SECTION HEADER ─── */
+.sec-header {
+  display:flex; align-items:center; gap:14px; margin-bottom:20px;
+}
+.sec-num {
+  font-family:'Bebas Neue',sans-serif; font-size:36px;
+  color:var(--accent5); min-width:40px;
+}
+.sec-title { font-family:'Bebas Neue',sans-serif; font-size:28px; letter-spacing:1px; }
+.sec-line { flex:1; height:1px; background:var(--border); }
+
+/* ─── CARDS ─── */
+.card {
+  background: var(--card); border:1px solid var(--border);
+  border-radius:10px; padding:28px;
+}
+.card-accent1 { border-left:4px solid var(--accent1); }
+.card-accent2 { border-left:4px solid var(--accent2); }
+.card-accent3 { border-left:4px solid var(--accent3); }
+.card-accent4 { border-left:4px solid var(--accent4); }
+.card-accent5 { border-left:4px solid var(--accent5); }
+
+/* ─── TABLE ─── */
+.tbl-wrap { overflow-x:auto; margin-top:14px; }
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th {
+  background:rgba(245,158,11,.15); color:var(--accent5);
+  padding:9px 14px; text-align:left; font-size:11px; letter-spacing:1px;
+  text-transform:uppercase; border-bottom:2px solid var(--accent5);
+}
+td {
+  padding:8px 14px; border-bottom:1px solid var(--border);
+  color:var(--muted);
+}
+td.pk { color:var(--accent5); font-weight:700; font-family:'DM Mono',monospace; }
+td.problem { color:#f87171; font-weight:600; }
+td.ok { color:var(--accent4); font-weight:600; }
+tr:hover td { background:rgba(255,255,255,.02); }
+
+/* ─── HIGHLIGHT BOX ─── */
+.highlight {
+  border-radius:8px; padding:16px 20px; margin:0;
+  display:flex; align-items:flex-start; gap:14px;
+}
+.hl-icon { font-size:22px; flex-shrink:0; margin-top:2px; }
+.hl-text { font-size:13px; }
+.hl-text strong { display:block; margin-bottom:4px; font-size:14px; }
+.hl-blue { background:rgba(0,212,255,.08); border:1px solid rgba(0,212,255,.25); }
+.hl-orange { background:rgba(255,107,53,.08); border:1px solid rgba(255,107,53,.25); }
+.hl-purple { background:rgba(124,58,237,.08); border:1px solid rgba(124,58,237,.25); }
+.hl-green { background:rgba(16,185,129,.08); border:1px solid rgba(16,185,129,.25); }
+.hl-yellow { background:rgba(245,158,11,.08); border:1px solid rgba(245,158,11,.25); }
+.hl-red { background:rgba(239,68,68,.08); border:1px solid rgba(239,68,68,.35); }
+
+/* ─── PISTA BOXES ─── */
+.pista-box {
+  background: var(--card2);
+  border: 1px dashed rgba(245,158,11,.4);
+  border-radius:8px; padding:16px 20px;
+  margin-top:10px;
+}
+.pista-label {
+  font-size:10px; letter-spacing:2px; text-transform:uppercase;
+  color:var(--accent5); font-weight:700; margin-bottom:6px;
+  display:flex; align-items:center; gap:6px;
+}
+.pista-text { font-size:12.5px; color:var(--muted); }
+.pista-text strong { color:var(--text); }
+
+/* ─── PASOS DE NORMALIZACIÓN ─── */
+.paso-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:18px; }
+.paso-card {
+  background: var(--card2); border-radius:10px; padding:22px;
+  border:1px solid var(--border); position:relative;
+}
+.paso-num {
+  font-family:'Bebas Neue',sans-serif; font-size:52px; line-height:1;
+  position:absolute; top:14px; right:18px; opacity:.12;
+}
+.paso-badge {
+  display:inline-block; font-size:10px; letter-spacing:2px;
+  text-transform:uppercase; padding:3px 10px; border-radius:4px;
+  font-weight:700; margin-bottom:10px;
+}
+.paso-1 .paso-badge { background:rgba(0,212,255,.15); color:var(--accent1); }
+.paso-2 .paso-badge { background:rgba(16,185,129,.15); color:var(--accent4); }
+.paso-3 .paso-badge { background:rgba(245,158,11,.15); color:var(--accent5); }
+.paso-1 .paso-num { color:var(--accent1); }
+.paso-2 .paso-num { color:var(--accent4); }
+.paso-3 .paso-num { color:var(--accent5); }
+
+.paso-title { font-size:16px; font-weight:700; margin-bottom:8px; }
+.paso-desc { font-size:12.5px; color:var(--muted); margin-bottom:12px; }
+.paso-check {
+  font-size:12px; display:flex; flex-direction:column; gap:6px;
+}
+.paso-check-item { display:flex; align-items:flex-start; gap:8px; }
+.paso-check-item .ico { flex-shrink:0; margin-top:1px; }
+
+/* ─── RÚBRICA ─── */
+.rubrica-table { width:100%; border-collapse:collapse; font-size:13px; }
+.rubrica-table th {
+  background:rgba(124,58,237,.2); color:var(--accent3);
+  padding:10px 14px; text-align:left;
+  border-bottom:2px solid var(--accent3);
+  font-size:11px; letter-spacing:1px; text-transform:uppercase;
+}
+.rubrica-table td {
+  padding:10px 14px; border-bottom:1px solid var(--border);
+  color:var(--text);
+}
+.rubrica-table tr:hover td { background:rgba(255,255,255,.02); }
+.pts-badge {
+  display:inline-block;
+  font-family:'Bebas Neue',sans-serif; font-size:17px;
+  padding:2px 10px; border-radius:4px;
+  background:rgba(124,58,237,.2); color:var(--accent3);
+  min-width:48px; text-align:center;
+}
+.pts-total {
+  background:rgba(16,185,129,.2); color:var(--accent4);
+}
+.rubrica-criterion { font-size:13px; font-weight:600; color:var(--text); }
+.rubrica-detail { font-size:11.5px; color:var(--muted); margin-top:3px; }
+
+/* ─── RESPUESTA EN BLANCO ─── */
+.blank-area {
+  border: 1.5px dashed rgba(255,255,255,.1);
+  border-radius:8px; padding:20px 24px;
+  min-height:90px;
+  display:flex; align-items:center; justify-content:center;
+  color:rgba(255,255,255,.12); font-size:13px; font-style:italic;
+}
+
+/* ─── FOOTER ─── */
+.footer {
+  margin:40px 40px 0; padding:20px; border-top:1px solid var(--border);
+  display:flex; justify-content:space-between; align-items:center;
+  font-size:12px; color:var(--muted);
+}
+.footer strong { color:var(--accent5); }
+
+/* ─── ANIMATIONS ─── */
+@keyframes fadeUp {
+  from { opacity:0; transform:translateY(20px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+.paso-card, .card {
+  animation: fadeUp .5s ease both;
+}
+
+/* ─── RESPONSIVE ─── */
+@media(max-width:700px){
+  .paso-grid{ grid-template-columns:1fr; }
+  .week-badge{ display:none; }
+  .hero{ padding:30px 20px; }
+  .main{ padding:20px; }
+}
+
+/* ─── EJERCICIO LABEL ─── */
+.ej-header {
+  background: rgba(245,158,11,.08);
+  border: 1px solid rgba(245,158,11,.25);
+  border-radius:8px; padding:14px 20px;
+  display:flex; align-items:center; gap:14px;
+  margin-bottom:18px;
+}
+.ej-num {
+  font-family:'Bebas Neue',sans-serif; font-size:32px; color:var(--accent5);
+  min-width:34px;
+}
+.ej-title { font-size:16px; font-weight:700; }
+.ej-sub { font-size:12px; color:var(--muted); margin-top:2px; }
+
+/* score pill row */
+.score-row {
+  display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px;
+}
+.score-pill {
+  display:flex; align-items:center; gap:8px;
+  background:var(--card2); border:1px solid var(--border);
+  border-radius:20px; padding:6px 16px; font-size:13px;
+}
+.score-pill .dot {
+  width:10px; height:10px; border-radius:50%;
+}
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-badge">✏️ Bases de Datos II · Semana 3 · Práctica</div>
+  <h1>Ejercicio Aplicado<br>Formas Normales</h1>
+  <p class="hero-sub">Aplica 1FN, 2FN y 3FN sobre una tabla desnormalizada del mundo real. Sigue las pistas en cada etapa para guiar tu razonamiento.</p>
+  <div class="hero-tags">
+    <span class="tag">1FN — Atomicidad</span>
+    <span class="tag">2FN — Sin Parciales</span>
+    <span class="tag">3FN — Sin Transitivas</span>
+    <span class="tag">Rúbrica / 50 pts</span>
+    <span class="tag">Trabajo en clase</span>
+  </div>
+  <div class="week-badge">EJ</div>
+</div>
+
+<div class="main">
+
+  <!-- ══════════ SECCIÓN 0: PUNTUACIÓN ══════════ -->
+  <div>
+    <div class="score-row">
+      <div class="score-pill"><div class="dot" style="background:var(--accent1)"></div>1FN — 15 pts</div>
+      <div class="score-pill"><div class="dot" style="background:var(--accent4)"></div>2FN — 17 pts</div>
+      <div class="score-pill"><div class="dot" style="background:var(--accent5)"></div>3FN — 18 pts</div>
+      <div class="score-pill" style="border-color:rgba(124,58,237,.4);background:rgba(124,58,237,.1);"><div class="dot" style="background:var(--accent3)"></div><strong style="color:var(--accent3)">TOTAL — 50 pts</strong></div>
+    </div>
+  </div>
+
+  <!-- ══════════ SECCIÓN 1: CONTEXTO ══════════ -->
+  <div>
+    <div class="sec-header">
+      <span class="sec-num">01</span>
+      <span class="sec-title">Contexto del Ejercicio</span>
+      <div class="sec-line"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
+      <div class="card card-accent5">
+        <h3 style="margin-bottom:10px;font-size:16px;">📋 Escenario</h3>
+        <p style="font-size:13px;color:var(--muted);">Una clínica veterinaria lleva el registro de sus <strong style="color:var(--text);">consultas</strong> en una sola hoja de cálculo. El encargado mezcló datos de mascotas, dueños, veterinarios y diagnósticos en <strong style="color:var(--accent5);">una única tabla</strong>. Tu trabajo es normalizarla paso a paso hasta la <strong style="color:var(--accent4);">3FN</strong>.</p>
+        <div style="margin-top:14px;" class="highlight hl-yellow">
+          <div class="hl-icon">🎯</div>
+          <div class="hl-text"><strong>Objetivo</strong>Identificar los problemas en cada forma normal y proponer tablas correctamente descompuestas.</div>
+        </div>
+      </div>
+      <div class="card card-accent2">
+        <h3 style="margin-bottom:12px;font-size:16px;">⚠️ Problemas que verás</h3>
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <div class="highlight hl-red">
+            <div class="hl-icon">🔴</div>
+            <div class="hl-text"><strong>Valores no atómicos</strong>Varias vacunas y teléfonos en una sola celda.</div>
+          </div>
+          <div class="highlight hl-red">
+            <div class="hl-icon">🔴</div>
+            <div class="hl-text"><strong>Dependencia parcial</strong>Datos de la mascota solo dependen de <em>id_mascota</em>, no de la clave compuesta completa.</div>
+          </div>
+          <div class="highlight hl-red">
+            <div class="hl-icon">🔴</div>
+            <div class="hl-text"><strong>Dependencia transitiva</strong>El nombre del veterinario depende de la especialidad, no directamente de la consulta.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ SECCIÓN 2: TABLA ORIGINAL ══════════ -->
+  <div>
+    <div class="sec-header">
+      <span class="sec-num">02</span>
+      <span class="sec-title">Tabla Original (Sin Normalizar)</span>
+      <div class="sec-line"></div>
+    </div>
+    <div class="card card-accent2">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;">
+        <span style="font-size:20px;">🏥</span>
+        <div>
+          <div style="font-weight:700;font-size:15px;">CONSULTA_CLINICA</div>
+          <div style="font-size:12px;color:var(--muted);">Clave primaria original: <span style="font-family:'DM Mono',monospace;color:var(--accent5);">id_consulta</span></div>
+        </div>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>id_consulta</th>
+              <th>id_mascota</th>
+              <th>nombre_mascota</th>
+              <th>especie</th>
+              <th>vacunas_aplicadas</th>
+              <th>telefono_dueño</th>
+              <th>nombre_dueño</th>
+              <th>cod_vet</th>
+              <th>nombre_vet</th>
+              <th>especialidad_vet</th>
+              <th>nombre_especialidad</th>
+              <th>fecha</th>
+              <th>diagnostico</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="pk">C001</td>
+              <td>M01</td>
+              <td>Firulais</td>
+              <td>Perro</td>
+              <td class="problem">"Rabia, Parvovirus"</td>
+              <td class="problem">"099-1111, 022-2222"</td>
+              <td>Ana Torres</td>
+              <td>V10</td>
+              <td>Dr. López</td>
+              <td>ESP01</td>
+              <td>Medicina General</td>
+              <td>2024-03-10</td>
+              <td>Gastroenteritis leve</td>
+            </tr>
+            <tr>
+              <td class="pk">C002</td>
+              <td>M02</td>
+              <td>Michi</td>
+              <td>Gato</td>
+              <td class="problem">"Leucemia, Rabia"</td>
+              <td class="problem">"098-3333"</td>
+              <td>Carlos Ruiz</td>
+              <td>V10</td>
+              <td>Dr. López</td>
+              <td>ESP01</td>
+              <td>Medicina General</td>
+              <td>2024-03-12</td>
+              <td>Conjuntivitis</td>
+            </tr>
+            <tr>
+              <td class="pk">C003</td>
+              <td>M01</td>
+              <td>Firulais</td>
+              <td>Perro</td>
+              <td class="problem">"Rabia, Parvovirus"</td>
+              <td class="problem">"099-1111, 022-2222"</td>
+              <td>Ana Torres</td>
+              <td>V20</td>
+              <td>Dra. Mora</td>
+              <td>ESP02</td>
+              <td>Dermatología</td>
+              <td>2024-04-01</td>
+              <td>Sarna sarcóptica</td>
+            </tr>
+            <tr>
+              <td class="pk">C004</td>
+              <td>M03</td>
+              <td>Rex</td>
+              <td>Perro</td>
+              <td class="problem">"Parvovirus, Moquillo, Rabia"</td>
+              <td class="problem">"091-5555"</td>
+              <td>Luis Paz</td>
+              <td>V20</td>
+              <td>Dra. Mora</td>
+              <td>ESP02</td>
+              <td>Dermatología</td>
+              <td>2024-04-05</td>
+              <td>Dermatitis atópica</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="margin-top:16px;" class="highlight hl-red">
+        <div class="hl-icon">❌</div>
+        <div class="hl-text"><strong>Columnas con valores NO atómicos (marcadas en rojo):</strong>
+          <code style="font-family:'DM Mono',monospace;font-size:12px;color:var(--accent2);">vacunas_aplicadas</code> y <code style="font-family:'DM Mono',monospace;font-size:12px;color:var(--accent2);">telefono_dueño</code> contienen múltiples valores separados por comas. Esto impide la 1FN.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ SECCIÓN 3: PASOS A SEGUIR ══════════ -->
+  <div>
+    <div class="sec-header">
+      <span class="sec-num">03</span>
+      <span class="sec-title">Pasos de Normalización</span>
+      <div class="sec-line"></div>
+    </div>
+
+    <!-- PASO 1FN -->
+    <div class="ej-header">
+      <div class="ej-num">1</div>
+      <div>
+        <div class="ej-title">Primera Forma Normal (1FN) — Atomicidad</div>
+        <div class="ej-sub">Identifica los valores no atómicos y propone cómo eliminarlos.</div>
+      </div>
+    </div>
+
+    <div class="paso-grid">
+      <div class="paso-card paso-1">
+        <div class="paso-num">1</div>
+        <div class="paso-badge">Regla 1FN</div>
+        <div class="paso-title">¿Qué debes lograr?</div>
+        <div class="paso-desc">Cada celda debe tener un único valor indivisible. No listas, no conjuntos separados por comas.</div>
+        <div class="paso-check">
+          <div class="paso-check-item"><span class="ico">✅</span> Definir una clave primaria clara</div>
+          <div class="paso-check-item"><span class="ico">✅</span> Separar multivalores en filas o en nueva tabla</div>
+          <div class="paso-check-item"><span class="ico">❌</span> Columnas con "val1, val2" → PROHIBIDO</div>
+        </div>
+      </div>
+
+      <div class="paso-card paso-1" style="grid-column:span 2;">
+        <div class="paso-num">1</div>
+        <div class="paso-badge">Tus columnas problemáticas</div>
+        <div class="paso-title">¿Qué columnas violan la 1FN?</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:10px;">
+          <div>
+            <div style="font-size:12px;color:var(--accent2);font-weight:700;margin-bottom:6px;">⚠️ vacunas_aplicadas</div>
+            <div style="font-size:12px;color:var(--muted);">Contiene múltiples vacunas en una celda: <br><code style="font-family:'DM Mono',monospace;color:#f87171;">"Rabia, Parvovirus"</code></div>
+            <div class="pista-box" style="margin-top:8px;">
+              <div class="pista-label">💡 Pista</div>
+              <div class="pista-text">Crea una tabla separada <strong>VACUNA_CONSULTA</strong> con los atributos <strong>id_consulta</strong> y <strong>nombre_vacuna</strong>. Cada vacuna ocupa una fila distinta.</div>
+            </div>
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--accent2);font-weight:700;margin-bottom:6px;">⚠️ telefono_dueño</div>
+            <div style="font-size:12px;color:var(--muted);">Contiene varios teléfonos en una celda: <br><code style="font-family:'DM Mono',monospace;color:#f87171;">"099-1111, 022-2222"</code></div>
+            <div class="pista-box" style="margin-top:8px;">
+              <div class="pista-label">💡 Pista</div>
+              <div class="pista-text">Crea una tabla <strong>TELEFONO_DUEÑO</strong> con <strong>id_dueño</strong> y <strong>telefono</strong>. Un dueño puede tener múltiples filas de teléfono.</div>
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:16px;" class="highlight hl-blue">
+          <div class="hl-icon">🧠</div>
+          <div class="hl-text"><strong>Pregunta clave para 1FN:</strong> ¿Puedo hacer <code style="font-family:'DM Mono',monospace;">WHERE vacuna = 'Rabia'</code> sin usar LIKE o split? Si no → NO cumple 1FN.</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:24px;"></div>
+
+    <!-- PASO 2FN -->
+    <div class="ej-header">
+      <div class="ej-num">2</div>
+      <div>
+        <div class="ej-title">Segunda Forma Normal (2FN) — Sin Dependencias Parciales</div>
+        <div class="ej-sub">Asume que la tabla ya cumple 1FN. Ahora analiza si algún atributo depende solo de PARTE de la clave.</div>
+      </div>
+    </div>
+
+    <div class="card card-accent4" style="margin-bottom:14px;">
+      <div style="font-size:14px;font-weight:700;margin-bottom:10px;">🔑 Clave primaria tras aplicar 1FN</div>
+      <div style="font-family:'DM Mono',monospace;font-size:13px;background:rgba(0,0,0,.3);padding:10px 14px;border-radius:6px;color:var(--accent5);">
+        PK = (id_consulta, id_mascota)  ← compuesta
+      </div>
+      <div style="margin-top:14px;font-size:13px;color:var(--muted);">Con esta clave compuesta, pregúntate: ¿existen atributos que dependen solo de <strong style="color:var(--accent5);">id_mascota</strong> y no de la combinación completa?</div>
+    </div>
+
+    <div class="paso-grid">
+      <div class="paso-card paso-2" style="grid-column:span 3;">
+        <div class="paso-num">2</div>
+        <div class="paso-badge">Análisis de dependencias parciales</div>
+        <div class="paso-title">¿Qué atributos dependen de solo una parte de la clave?</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:12px;">
+
+          <div style="background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:14px;">
+            <div style="color:#f87171;font-size:11px;letter-spacing:1px;font-weight:700;margin-bottom:8px;">❌ DEPENDE SOLO DE id_mascota</div>
+            <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);">
+              nombre_mascota<br>especie<br>id_dueño<br>nombre_dueño
+            </div>
+            <div class="pista-box" style="margin-top:10px;">
+              <div class="pista-label">💡 Pista</div>
+              <div class="pista-text">Estos van a la tabla <strong>MASCOTA(id_mascota PK, nombre_mascota, especie, id_dueño)</strong></div>
+            </div>
+          </div>
+
+          <div style="background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.2);border-radius:8px;padding:14px;">
+            <div style="color:#f87171;font-size:11px;letter-spacing:1px;font-weight:700;margin-bottom:8px;">❌ DEPENDE SOLO DE cod_vet</div>
+            <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);">
+              nombre_vet<br>especialidad_vet<br>nombre_especialidad
+            </div>
+            <div class="pista-box" style="margin-top:10px;">
+              <div class="pista-label">💡 Pista</div>
+              <div class="pista-text">Estos van a la tabla <strong>VETERINARIO(cod_vet PK, nombre_vet, especialidad_vet, nombre_especialidad)</strong></div>
+            </div>
+          </div>
+
+          <div style="background:rgba(16,185,129,.07);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:14px;">
+            <div style="color:var(--accent4);font-size:11px;letter-spacing:1px;font-weight:700;margin-bottom:8px;">✅ DEPENDE DE LA CLAVE COMPLETA</div>
+            <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--muted);">
+              fecha<br>diagnostico<br>cod_vet (FK)
+            </div>
+            <div class="pista-box" style="margin-top:10px;border-color:rgba(16,185,129,.3);">
+              <div class="pista-label" style="color:var(--accent4);">✅ Correcto</div>
+              <div class="pista-text">Estos permanecen en la tabla <strong>CONSULTA(id_consulta PK, id_mascota FK, cod_vet FK, fecha, diagnostico)</strong></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:24px;"></div>
+
+    <!-- PASO 3FN -->
+    <div class="ej-header">
+      <div class="ej-num">3</div>
+      <div>
+        <div class="ej-title">Tercera Forma Normal (3FN) — Sin Dependencias Transitivas</div>
+        <div class="ej-sub">Con las tablas de 2FN, detecta si algún atributo NO clave determina a otro atributo NO clave.</div>
+      </div>
+    </div>
+
+    <div class="card card-accent5">
+      <div style="font-size:14px;font-weight:700;margin-bottom:14px;">🔗 Analiza la tabla VETERINARIO</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;">
+        <div>
+          <div style="font-family:'DM Mono',monospace;font-size:12px;background:rgba(0,0,0,.3);padding:12px;border-radius:6px;color:var(--muted);line-height:2;">
+            <span style="color:var(--accent5);">VETERINARIO</span>(<br>
+            &nbsp;&nbsp;<span style="color:var(--accent5);font-weight:700;">cod_vet</span> PK,<br>
+            &nbsp;&nbsp;nombre_vet,<br>
+            &nbsp;&nbsp;<span style="color:#f87171;">especialidad_vet,</span><br>
+            &nbsp;&nbsp;<span style="color:#f87171;">nombre_especialidad</span><br>
+            )
+          </div>
+          <div class="pista-box" style="margin-top:12px;">
+            <div class="pista-label">💡 Dependencia detectada</div>
+            <div class="pista-text"><strong>cod_vet → especialidad_vet → nombre_especialidad</strong><br>
+            El nombre de la especialidad NO depende de cod_vet directamente, sino de especialidad_vet. ¡Eso es una dependencia transitiva!</div>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">Para resolver esto, separa la especialidad en su propia tabla:</div>
+          <div style="font-family:'DM Mono',monospace;font-size:12px;background:rgba(0,0,0,.3);padding:12px;border-radius:6px;color:var(--muted);line-height:2;">
+            <span style="color:var(--accent4);">ESPECIALIDAD</span>(<br>
+            &nbsp;&nbsp;<span style="color:var(--accent5);font-weight:700;">especialidad_vet</span> PK,<br>
+            &nbsp;&nbsp;nombre_especialidad<br>
+            )<br><br>
+            <span style="color:var(--accent4);">VETERINARIO</span>(<br>
+            &nbsp;&nbsp;<span style="color:var(--accent5);font-weight:700;">cod_vet</span> PK,<br>
+            &nbsp;&nbsp;nombre_vet,<br>
+            &nbsp;&nbsp;especialidad_vet FK<br>
+            )
+          </div>
+          <div class="pista-box" style="margin-top:12px;border-color:rgba(16,185,129,.3);">
+            <div class="pista-label" style="color:var(--accent4);">💡 Pista 3FN</div>
+            <div class="pista-text">La regla es simple: <strong>ningún atributo no-clave puede determinar a otro atributo no-clave.</strong> Si encuentras eso → saca ese grupo a una nueva tabla.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ SECCIÓN 4: RESUMEN ESPERADO ══════════ -->
+  <div>
+    <div class="sec-header">
+      <span class="sec-num">04</span>
+      <span class="sec-title">Tablas Resultantes Esperadas (3FN)</span>
+      <div class="sec-line"></div>
+    </div>
+    <div class="card card-accent3">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:18px;">Al finalizar correctamente deberías tener <strong style="color:var(--accent3);">al menos 6 tablas</strong>. Completa los atributos faltantes según tu análisis:</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;">
+
+        <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:16px;">
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:16px;color:var(--accent1);margin-bottom:8px;">CONSULTA</div>
+          <div style="font-family:'DM Mono',monospace;font-size:11.5px;color:var(--muted);line-height:2;">
+            🔑 id_consulta PK<br>
+            🔗 id_mascota FK<br>
+            🔗 cod_vet FK<br>
+            📅 fecha<br>
+            📝 diagnostico
+          </div>
+        </div>
+
+        <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:16px;">
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:16px;color:var(--accent4);margin-bottom:8px;">MASCOTA</div>
+          <div style="font-family:'DM Mono',monospace;font-size:11.5px;color:var(--muted);line-height:2;">
+            🔑 id_mascota PK<br>
+            📌 nombre_mascota<br>
+            📌 especie<br>
+            🔗 id_dueño FK
+          </div>
+        </div>
+
+        <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:16px;">
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:16px;color:var(--accent5);margin-bottom:8px;">DUEÑO</div>
+          <div style="font-family:'DM Mono',monospace;font-size:11.5px;color:var(--muted);line-height:2;">
+            🔑 id_dueño PK<br>
+            📌 nombre_dueño
+          </div>
+        </div>
+
+        <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:16px;">
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:16px;color:var(--accent3);margin-bottom:8px;">VETERINARIO</div>
+          <div style="font-family:'DM Mono',monospace;font-size:11.5px;color:var(--muted);line-height:2;">
+            🔑 cod_vet PK<br>
+            📌 nombre_vet<br>
+            🔗 especialidad_vet FK
+          </div>
+        </div>
+
+        <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:16px;">
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:16px;color:var(--accent2);margin-bottom:8px;">ESPECIALIDAD</div>
+          <div style="font-family:'DM Mono',monospace;font-size:11.5px;color:var(--muted);line-height:2;">
+            🔑 especialidad_vet PK<br>
+            📌 nombre_especialidad
+          </div>
+        </div>
+
+        <div style="background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:16px;">
+          <div style="font-family:'Bebas Neue',sans-serif;font-size:16px;color:#7dd3fc;margin-bottom:8px;">VACUNA_CONSULTA</div>
+          <div style="font-family:'DM Mono',monospace;font-size:11.5px;color:var(--muted);line-height:2;">
+            🔑 id_consulta PK+FK<br>
+            🔑 nombre_vacuna PK<br>
+            <span style="color:#94a3b8;font-style:italic;">(tabla de relación)</span>
+          </div>
+        </div>
+
+      </div>
+
+      <div style="margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="highlight hl-purple">
+          <div class="hl-icon">🔗</div>
+          <div class="hl-text"><strong>TELEFONO_DUEÑO</strong> — tabla extra<br>
+          <code style="font-family:'DM Mono',monospace;font-size:11px;">TELEFONO_DUEÑO(id_dueño FK, telefono)</code><br>
+          <span style="font-size:11px;color:var(--muted);">Permite que un dueño tenga múltiples teléfonos sin violar 1FN.</span></div>
+        </div>
+        <div class="highlight hl-green">
+          <div class="hl-icon">✅</div>
+          <div class="hl-text"><strong>¿Cuántas tablas en total?</strong><br>
+          <span style="font-size:13px;">7 tablas: CONSULTA, MASCOTA, DUEÑO, TELEFONO_DUEÑO, VETERINARIO, ESPECIALIDAD, VACUNA_CONSULTA</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ SECCIÓN 5: RÚBRICA ══════════ -->
+  <div>
+    <div class="sec-header">
+      <span class="sec-num">05</span>
+      <span class="sec-title">Rúbrica de Evaluación — 50 Puntos</span>
+      <div class="sec-line"></div>
+    </div>
+    <div class="card card-accent3">
+      <table class="rubrica-table">
+        <thead>
+          <tr>
+            <th style="width:5%;">#</th>
+            <th style="width:35%;">Criterio</th>
+            <th style="width:40%;">Descripción / Indicadores</th>
+            <th style="width:20%;">Puntaje</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <!-- 1FN -->
+          <tr>
+            <td style="color:var(--accent1);font-weight:700;font-family:'DM Mono',monospace;">1.1</td>
+            <td>
+              <div class="rubrica-criterion" style="color:var(--accent1);">1FN — Identificación de problemas</div>
+              <div class="rubrica-detail">Detecta correctamente las columnas no atómicas</div>
+            </td>
+            <td>
+              <div style="font-size:12px;color:var(--muted);">Menciona explícitamente <em>vacunas_aplicadas</em> y <em>telefono_dueño</em> como violaciones. Justifica por qué no son atómicas.</div>
+            </td>
+            <td><span class="pts-badge">5 pts</span></td>
+          </tr>
+          <tr>
+            <td style="color:var(--accent1);font-weight:700;font-family:'DM Mono',monospace;">1.2</td>
+            <td>
+              <div class="rubrica-criterion" style="color:var(--accent1);">1FN — Solución correcta</div>
+              <div class="rubrica-detail">Propone tablas o estructura correcta</div>
+            </td>
+            <td>
+              <div style="font-size:12px;color:var(--muted);">Crea VACUNA_CONSULTA y TELEFONO_DUEÑO con claves correctas. La tabla resultante tiene solo valores atómicos.</div>
+            </td>
+            <td><span class="pts-badge">10 pts</span></td>
+          </tr>
+
+          <!-- 2FN -->
+          <tr style="background:rgba(16,185,129,.03);">
+            <td style="color:var(--accent4);font-weight:700;font-family:'DM Mono',monospace;">2.1</td>
+            <td>
+              <div class="rubrica-criterion" style="color:var(--accent4);">2FN — Identifica clave compuesta</div>
+              <div class="rubrica-detail">Reconoce que la PK es compuesta</div>
+            </td>
+            <td>
+              <div style="font-size:12px;color:var(--muted);">Define correctamente que <code style="font-family:'DM Mono',monospace;">PK = (id_consulta, id_mascota)</code> y explica qué implica una dependencia parcial.</div>
+            </td>
+            <td><span class="pts-badge">4 pts</span></td>
+          </tr>
+          <tr style="background:rgba(16,185,129,.03);">
+            <td style="color:var(--accent4);font-weight:700;font-family:'DM Mono',monospace;">2.2</td>
+            <td>
+              <div class="rubrica-criterion" style="color:var(--accent4);">2FN — Detecta dependencias parciales</div>
+              <div class="rubrica-detail">Señala qué atributos dependen parcialmente</div>
+            </td>
+            <td>
+              <div style="font-size:12px;color:var(--muted);">Identifica que nombre_mascota, especie dependen solo de id_mascota; y nombre_vet, especialidad dependen solo de cod_vet.</div>
+            </td>
+            <td><span class="pts-badge">5 pts</span></td>
+          </tr>
+          <tr style="background:rgba(16,185,129,.03);">
+            <td style="color:var(--accent4);font-weight:700;font-family:'DM Mono',monospace;">2.3</td>
+            <td>
+              <div class="rubrica-criterion" style="color:var(--accent4);">2FN — Tablas resultantes correctas</div>
+              <div class="rubrica-detail">CONSULTA, MASCOTA, VETERINARIO bien definidas</div>
+            </td>
+            <td>
+              <div style="font-size:12px;color:var(--muted);">Las tres tablas tienen atributos correctos, claves primarias y foráneas bien indicadas. No hay dependencias parciales residuales.</div>
+            </td>
+            <td><span class="pts-badge">8 pts</span></td>
+          </tr>
+
+          <!-- 3FN -->
+          <tr>
+            <td style="color:var(--accent5);font-weight:700;font-family:'DM Mono',monospace;">3.1</td>
+            <td>
+              <div class="rubrica-criterion" style="color:var(--accent5);">3FN — Identifica dependencia transitiva</div>
+              <div class="rubrica-detail">Señala la cadena transitiva correcta</div>
+            </td>
+            <td>
+              <div style="font-size:12px;color:var(--muted);">Expresa explícitamente: <code style="font-family:'DM Mono',monospace;font-size:11px;">cod_vet → especialidad_vet → nombre_especialidad</code> como violación de 3FN.</div>
+            </td>
+            <td><span class="pts-badge">5 pts</span></td>
+          </tr>
+          <tr>
+            <td style="color:var(--accent5);font-weight:700;font-family:'DM Mono',monospace;">3.2</td>
+            <td>
+              <div class="rubrica-criterion" style="color:var(--accent5);">3FN — Tabla ESPECIALIDAD creada</div>
+              <div class="rubrica-detail">Separa correctamente la especialidad</div>
+            </td>
+            <td>
+              <div style="font-size:12px;color:var(--muted);">Crea ESPECIALIDAD(especialidad_vet PK, nombre_especialidad) y actualiza VETERINARIO con FK. No quedan transitivas.</div>
+            </td>
+            <td><span class="pts-badge">8 pts</span></td>
+          </tr>
+          <tr>
+            <td style="color:var(--accent5);font-weight:700;font-family:'DM Mono',monospace;">3.3</td>
+            <td>
+              <div class="rubrica-criterion" style="color:var(--accent5);">3FN — Esquema final completo</div>
+              <div class="rubrica-detail">Las 7 tablas presentadas con claridad</div>
+            </td>
+            <td>
+              <div style="font-size:12px;color:var(--muted);">Presenta todas las tablas finales con atributos, PK y FK. El esquema es coherente y sin redundancias.</div>
+            </td>
+            <td><span class="pts-badge">5 pts</span></td>
+          </tr>
+
+          <!-- TOTAL -->
+          <tr style="background:rgba(124,58,237,.08);">
+            <td colspan="3" style="text-align:right;font-weight:700;font-size:14px;color:var(--accent3);">TOTAL</td>
+            <td><span class="pts-badge pts-total" style="font-size:20px;padding:4px 14px;">50 pts</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style="margin-top:18px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
+        <div class="highlight hl-green">
+          <div class="hl-icon">🥇</div>
+          <div class="hl-text"><strong>45 – 50 pts</strong><br>Excelente — domina las tres formas normales</div>
+        </div>
+        <div class="highlight hl-blue">
+          <div class="hl-icon">🥈</div>
+          <div class="hl-text"><strong>35 – 44 pts</strong><br>Satisfactorio — comprende el proceso con pequeños errores</div>
+        </div>
+        <div class="highlight hl-orange">
+          <div class="hl-icon">🥉</div>
+          <div class="hl-text"><strong>&lt; 35 pts</strong><br>En proceso — revisar conceptos de dependencias funcionales</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  <div>✏️ <strong>Bases de Datos II</strong> · Semana 03 · Infografía 2 de 3 — Ejercicio Práctico</div>
+  <div>Docente: <strong>Edison Fernando Meneses Torres</strong> · Quinto "A" · 1PO2026</div>
+</div>
+
+</body>
+</html>
