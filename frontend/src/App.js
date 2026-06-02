@@ -48,6 +48,7 @@ const DEFAULT_PASSWORD = 'Musica2026!';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Gauge, adminOnly: false },
+  { id: 'calendario', label: 'Calendario', icon: CalendarDays, adminOnly: false },
   { id: 'reservas', label: 'Reservas', icon: Plus, adminOnly: false },
   { id: 'prestamos', label: 'Préstamos', icon: PackageCheck, adminOnly: false },
   { id: 'estadisticas', label: 'Estadísticas', icon: BarChart3, adminOnly: false },
@@ -551,6 +552,9 @@ export default function App() {
         {activeView === 'dashboard' && (
           <Dashboard isAdmin={isAdmin} stats={stats} reservas={reservas} prestamos={prestamos} inventario={inventario} />
         )}
+        {activeView === 'calendario' && (
+          <CalendarioView events={calendarEvents} currentUser={currentUser} setActiveView={setActiveView} setForm={setReservaForm} />
+        )}
         {activeView === 'reservas' && (
           <ReservasView
             api={api}
@@ -732,87 +736,116 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents
   }, [page, search, form]);
 
   return (
-    <div className="two-column" style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '20px' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        <section className="panel" style={{ height: 'fit-content' }}>
-          <div className="panel-title"><Plus size={18} /><h2>Nueva reserva</h2></div>
-          <form className="form" onSubmit={onSubmit}>
-            {isAdmin && (
-              <Field label="Socio">
-                <SelectInput value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value })} required>
-                  <option value="">Selecciona un socio</option>
-                  {usersList.map((user) => <option key={user.id} value={user.id}>{user.nombre_completo}</option>)}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: '20px', alignItems: 'start' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <section className="panel" style={{ height: 'fit-content' }}>
+            <div className="panel-title"><Plus size={18} /><h2>Nueva reserva</h2></div>
+            <form className="form" onSubmit={onSubmit}>
+              {isAdmin && (
+                <Field label="Socio">
+                  <SelectInput value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value })} required>
+                    <option value="">Selecciona un socio</option>
+                    {usersList.map((user) => <option key={user.id} value={user.id}>{user.nombre_completo}</option>)}
+                  </SelectInput>
+                </Field>
+              )}
+              <Field label="Sala">
+                <SelectInput value={form.sala_id} onChange={(e) => setForm({ ...form, sala_id: e.target.value })} required>
+                  <option value="">Selecciona una sala</option>
+                  {salas.filter((sala) => sala.estado === 'ACTIVA').map((sala) => (
+                    <option key={sala.id} value={sala.id}>{sala.nombre} · {sala.capacidad} personas</option>
+                  ))}
                 </SelectInput>
               </Field>
-            )}
-            <Field label="Sala">
-              <SelectInput value={form.sala_id} onChange={(e) => setForm({ ...form, sala_id: e.target.value })} required>
-                <option value="">Selecciona una sala</option>
-                {salas.filter((sala) => sala.estado === 'ACTIVA').map((sala) => (
-                  <option key={sala.id} value={sala.id}>{sala.nombre} · {sala.capacidad} personas</option>
-                ))}
-              </SelectInput>
-            </Field>
-            <Field label="Inicio">
-              <TextInput 
-                type="datetime-local" 
-                value={form.fecha_inicio} 
-                onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })} 
-                min={new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
-                required 
-              />
-            </Field>
-            <Field label="Fin">
-              <TextInput 
-                type="datetime-local" 
-                value={form.fecha_fin} 
-                onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })} 
-                min={form.fecha_inicio || new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
-                required 
-              />
-            </Field>
-            <label className="checkline">
-              <input type="checkbox" checked={form.terminos_aceptados} onChange={(e) => setForm({ ...form, terminos_aceptados: e.target.checked })} />
-              Acepto las condiciones de uso de sala.
-            </label>
-            <button className="button primary" type="submit">Confirmar reserva</button>
-          </form>
-        </section>
+              <Field label="Inicio">
+                <TextInput 
+                  type="datetime-local" 
+                  value={form.fecha_inicio} 
+                  onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })} 
+                  min={new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+                  required 
+                />
+              </Field>
+              <Field label="Fin">
+                <TextInput 
+                  type="datetime-local" 
+                  value={form.fecha_fin} 
+                  onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })} 
+                  min={form.fecha_inicio || new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+                  required 
+                />
+              </Field>
+              <label className="checkline">
+                <input type="checkbox" checked={form.terminos_aceptados} onChange={(e) => setForm({ ...form, terminos_aceptados: e.target.checked })} />
+                Acepto las condiciones de uso de sala.
+              </label>
+              <button className="button primary" type="submit">Confirmar reserva</button>
+            </form>
+          </section>
 
-        <section className="panel" style={{ height: 'fit-content' }}>
-          <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CalendarDays size={18} /><h2>Lista de reservas</h2></div>
-          </div>
-          <div style={{ marginBottom: '1rem' }}>
-            <TextInput placeholder="Buscar por socio o sala..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
-          </div>
-          <div className="table" style={{ fontSize: '0.85rem' }}>
-            {data.map((reserva) => (
-              <div className="row" key={reserva.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' }}>
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <strong>{reserva.sala_nombre}</strong>
-                  <span style={{ color: 'var(--muted)' }}>{formatDate(reserva.fecha_inicio)}</span>
+          <section className="panel" style={{ height: 'fit-content' }}>
+            <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CalendarDays size={18} /><h2>Lista de reservas</h2></div>
+            </div>
+            <div style={{ marginBottom: '1rem' }}>
+              <TextInput placeholder="Buscar por socio o sala..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
+            </div>
+            <div className="table" style={{ fontSize: '0.85rem' }}>
+              {data.map((reserva) => (
+                <div className="row" key={reserva.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <strong>{reserva.sala_nombre}</strong>
+                    <span style={{ color: 'var(--muted)' }}>{formatDate(reserva.fecha_inicio)}</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                    <Badge value={reserva.estado} />
+                    {reserva.estado !== 'CANCELADA' && <button className="link-button" onClick={() => { onCancel(reserva.id); setPage(page); }} style={{ fontSize: '0.8rem' }}>Cancelar</button>}
+                  </div>
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
-                  <Badge value={reserva.estado} />
-                  {reserva.estado !== 'CANCELADA' && <button className="link-button" onClick={() => { onCancel(reserva.id); setPage(page); }} style={{ fontSize: '0.8rem' }}>Cancelar</button>}
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem', alignItems: 'center', fontSize: '0.85rem' }}>
+              <button className="button ghost" disabled={page === 1} onClick={() => setPage(p => p - 1)} style={{ padding: '4px' }}>Ant</button>
+              <span>Pág {page} ({total})</span>
+              <button className="button ghost" disabled={page * 5 >= total} onClick={() => setPage(p => p + 1)} style={{ padding: '4px' }}>Sig</button>
+            </div>
+          </section>
+        </div>
+
+        <section className="panel" style={{ minHeight: '600px', display: 'flex', flexDirection: 'column' }}>
+          <div className="panel-title" style={{ marginBottom: '12px' }}>
+            <CalendarDays size={18} style={{ color: 'var(--primary)' }} />
+            <h2>Calendario de Reservas</h2>
+            <span style={{ fontSize: '0.8rem', color: 'var(--muted)', marginLeft: 'auto' }}>Haz clic y arrastra para pre-llenar el formulario</span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem', alignItems: 'center', fontSize: '0.85rem' }}>
-            <button className="button ghost" disabled={page === 1} onClick={() => setPage(p => p - 1)} style={{ padding: '4px' }}>Ant</button>
-            <span>Pág {page} ({total})</span>
-            <button className="button ghost" disabled={page * 5 >= total} onClick={() => setPage(p => p + 1)} style={{ padding: '4px' }}>Sig</button>
+          <div style={{ flex: 1, minHeight: '550px' }}>
+            <Calendar
+              localizer={localizer}
+              events={(calendarEvents || []).map(e => ({ ...e, start: new Date(e.start), end: new Date(e.end), title: e.sala_nombre ? `${e.sala_nombre} - ${e.nombre_completo || ''}` : (e.title || 'Reservada') }))}
+              startAccessor="start"
+              endAccessor="end"
+              culture="es"
+              selectable={true}
+              onSelectSlot={({ start, end }) => {
+                const pad = (n) => n.toString().padStart(2, '0');
+                const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+                setForm(prev => ({ ...prev, fecha_inicio: fmt(start), fecha_fin: fmt(end) }));
+              }}
+              views={['month', 'week', 'day']}
+              defaultView="week"
+              min={new Date(0, 0, 0, 8, 0, 0)}
+              max={new Date(0, 0, 0, 22, 0, 0)}
+              eventPropGetter={(event) => {
+                if (event.socio_id === currentUser?.id) return { style: { backgroundColor: '#dcfce7', color: '#166534', borderLeft: '4px solid #16a34a', borderRadius: '6px' } };
+                return { style: { backgroundColor: '#e0f2fe', color: '#0369a1', borderLeft: '4px solid #0284c7', borderRadius: '6px' } };
+              }}
+              messages={{ next: 'Siguiente', previous: 'Anterior', today: 'Hoy', month: 'Mes', week: 'Semana', day: 'Día', noEventsInRange: 'Sin reservas en este rango' }}
+              style={{ height: '100%', minHeight: '550px' }}
+            />
           </div>
         </section>
       </div>
-
-      <CalendarioView 
-        events={calendarEvents || []} 
-        currentUser={currentUser} 
-        setForm={setForm} 
-      />
     </div>
   );
 }
