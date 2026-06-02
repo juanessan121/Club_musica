@@ -15,7 +15,26 @@ import {
   BarChart3,
 } from 'lucide-react';
 
+import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
+import format from 'date-fns/format';
+import parse from 'date-fns/parse';
+import startOfWeek from 'date-fns/startOfWeek';
+import getDay from 'date-fns/getDay';
+import es from 'date-fns/locale/es';
+import 'react-big-calendar/lib/css/react-big-calendar.css';
+
 import StatisticsView from './StatisticsView';
+
+const locales = {
+  'es': es,
+};
+const localizer = dateFnsLocalizer({
+  format,
+  parse,
+  startOfWeek,
+  getDay,
+  locales,
+});
 
 function resolveApiUrl() {
   const configured = process.env.REACT_APP_API_URL;
@@ -29,12 +48,13 @@ const DEFAULT_PASSWORD = 'Musica2026!';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Gauge, adminOnly: false },
-  { id: 'reservas', label: 'Reservas', icon: CalendarDays, adminOnly: false },
+  { id: 'reservas', label: 'Reservas', icon: Plus, adminOnly: false },
   { id: 'prestamos', label: 'Préstamos', icon: PackageCheck, adminOnly: false },
   { id: 'estadisticas', label: 'Estadísticas', icon: BarChart3, adminOnly: false },
   { id: 'inventario', label: 'Inventario', icon: Guitar, adminOnly: false },
   { id: 'socios', label: 'Socios', icon: Users, adminOnly: true },
   { id: 'salas', label: 'Salas', icon: DoorOpen, adminOnly: true },
+  { id: 'perfil', label: 'Mi Perfil', icon: Users, adminOnly: false },
 ];
 
 const emptyReserva = {
@@ -118,13 +138,96 @@ function formatDate(value) {
   return value.replace('T', ' ').slice(0, 16);
 }
 
+function exportToCSV(data, filename) {
+  const headers = Object.keys(data[0] || {}).join(',');
+  const rows = data.map(row => Object.values(row).map(val => `"${val}"`).join(','));
+  const csvContent = [headers, ...rows].join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+}
+
+function CalendarioView({ events, currentUser, setActiveView, setForm }) {
+  const formattedEvents = events.map(e => ({
+    ...e,
+    start: new Date(e.start),
+    end: new Date(e.end),
+    title: e.title || 'Reservada'
+  }));
+
+  const eventPropGetter = (event) => {
+    let className = 'calendar-event-default';
+    if (event.nombre_completo === 'Ocupado' || event.title.includes('- Reservada')) {
+      className = 'calendar-event-busy';
+    } else if (event.socio_id === currentUser?.id) {
+      className = 'calendar-event-mine';
+    } else {
+      className = 'calendar-event-admin'; // Admin viewing someone else's
+    }
+    return { className };
+  };
+
+  const toLocalISOString = (date) => {
+    const pad = (n) => n.toString().padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  const handleSelectSlot = ({ start, end }) => {
+    if(setForm) {
+      setForm(prev => ({
+        ...prev,
+        fecha_inicio: toLocalISOString(start),
+        fecha_fin: toLocalISOString(end)
+      }));
+    }
+  };
+
+  return (
+    <div className="panel full" style={{ height: '85vh', display: 'flex', flexDirection: 'column', border: 'none', boxShadow: 'none', padding: '0' }}>
+      <div className="panel-title" style={{ marginBottom: '15px' }}>
+        <CalendarDays size={22} style={{ color: 'var(--primary)' }} />
+        <h2 style={{ fontSize: '20px' }}>Calendario de Reservas</h2>
+      </div>
+      <div style={{ flex: 1, padding: '1rem', background: '#fff', borderRadius: '12px', boxShadow: 'var(--shadow)', border: '1px solid var(--line)' }}>
+        <Calendar
+          localizer={localizer}
+          events={formattedEvents}
+          startAccessor="start"
+          endAccessor="end"
+          culture="es"
+          selectable={true}
+          onSelectSlot={handleSelectSlot}
+          views={['month', 'week', 'day']}
+          defaultView="week"
+          min={new Date(0, 0, 0, 8, 0, 0)} // Empieza a las 8am
+          max={new Date(0, 0, 0, 22, 0, 0)} // Termina a las 10pm
+          eventPropGetter={eventPropGetter}
+          messages={{
+            next: "Siguiente",
+            previous: "Anterior",
+            today: "Hoy",
+            month: "Mes",
+            week: "Semana",
+            day: "Día"
+          }}
+          style={{ height: '100%' }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [currentUser, setCurrentUser] = useState(() => JSON.parse(localStorage.getItem('currentUser')) || null);
+  const [isAdmin, setIsAdmin] = useState(() => localStorage.getItem('isAdmin') === 'true');
   const [activeView, setActiveView] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
   const [login, setLogin] = useState({ email: 'juan.sandoval@pucesa.edu.ec', password: DEFAULT_PASSWORD });
+  const [showRecover, setShowRecover] = useState(false);
+  const [recoverEmail, setRecoverEmail] = useState('');
 
   const [stats, setStats] = useState(null);
   const [usersList, setUsersList] = useState([]);
@@ -144,11 +247,22 @@ export default function App() {
   const availableInstruments = inventario.filter((item) => item.disponible && item.estado === 'DISPONIBLE');
 
   async function api(path, options = {}) {
+    const token = localStorage.getItem('token');
+    const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     const response = await fetch(`${API_URL}${path}`, {
-      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      headers,
       ...options,
     });
     const data = await response.json().catch(() => ({}));
+    if (response.status === 401 || response.status === 403) {
+      if (currentUser) {
+        logout();
+        throw new Error(data.error || 'Sesión expirada o sin permisos');
+      }
+    }
     if (!response.ok) throw new Error(data.error || 'Error de servidor');
     return data;
   }
@@ -193,8 +307,28 @@ export default function App() {
       });
       setCurrentUser(data.user);
       setIsAdmin(Boolean(data.is_admin));
+      localStorage.setItem('currentUser', JSON.stringify(data.user));
+      localStorage.setItem('isAdmin', Boolean(data.is_admin));
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+      }
       setReservaForm({ ...emptyReserva, user_id: data.user.id });
       setPrestamoForm({ ...emptyPrestamo, user_id: data.user.id });
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleRecover(event) {
+    event.preventDefault();
+    setLoading(true);
+    setMessage({ text: '', type: '' });
+    try {
+      const data = await api('/auth/recover', { method: 'POST', body: JSON.stringify({ email: recoverEmail }) });
+      setMessage({ text: data.message || 'Revisa tu WhatsApp', type: 'success' });
+      setShowRecover(false);
     } catch (err) {
       setMessage({ text: err.message, type: 'error' });
     } finally {
@@ -207,6 +341,9 @@ export default function App() {
     setIsAdmin(false);
     setActiveView('dashboard');
     setMessage({ text: '', type: '' });
+    localStorage.removeItem('currentUser');
+    localStorage.removeItem('isAdmin');
+    localStorage.removeItem('token');
   }
 
   async function submitReserva(event) {
@@ -327,18 +464,40 @@ export default function App() {
           <h1>Club de Música</h1>
           <p>Gestión de socios, salas, préstamos e inventario.</p>
           <Message message={message} />
-          <form className="form" onSubmit={handleLogin}>
-            <Field label="Correo institucional">
-              <TextInput type="email" value={login.email} onChange={(e) => setLogin({ ...login, email: e.target.value })} required />
-            </Field>
-            <Field label="Contraseña">
-              <TextInput type="password" value={login.password} onChange={(e) => setLogin({ ...login, password: e.target.value })} required />
-            </Field>
-            <button className="button primary" type="submit" disabled={loading}>
-              {loading ? 'Validando...' : 'Ingresar'}
-            </button>
-          </form>
-          <div className="hint">
+          {!showRecover ? (
+            <>
+              <form className="form" onSubmit={handleLogin}>
+                <Field label="Correo institucional">
+                  <TextInput type="email" value={login.email} onChange={(e) => setLogin({ ...login, email: e.target.value })} required />
+                </Field>
+                <Field label="Contraseña">
+                  <TextInput type="password" value={login.password} onChange={(e) => setLogin({ ...login, password: e.target.value })} required />
+                </Field>
+                <button className="button primary" type="submit" disabled={loading}>
+                  {loading ? 'Validando...' : 'Ingresar'}
+                </button>
+              </form>
+              <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+                <button className="link-button" onClick={() => setShowRecover(true)}>¿Olvidaste tu contraseña?</button>
+              </div>
+            </>
+          ) : (
+            <>
+              <form className="form" onSubmit={handleRecover}>
+                <p style={{ fontSize: '0.9rem', marginBottom: '1rem', color: '#666' }}>Ingresa tu correo institucional y te enviaremos un código PIN temporal a tu WhatsApp registrado.</p>
+                <Field label="Correo institucional">
+                  <TextInput type="email" value={recoverEmail} onChange={(e) => setRecoverEmail(e.target.value)} required />
+                </Field>
+                <button className="button primary" type="submit" disabled={loading}>
+                  {loading ? 'Enviando...' : 'Recuperar contraseña'}
+                </button>
+              </form>
+              <div style={{ marginTop: '1rem', textAlign: 'center' }}>
+                <button className="link-button" onClick={() => setShowRecover(false)}>Volver al inicio</button>
+              </div>
+            </>
+          )}
+          <div className="hint" style={{ marginTop: '1.5rem' }}>
             <strong>Semilla:</strong> juan.sandoval@pucesa.edu.ec / {DEFAULT_PASSWORD}
           </div>
         </section>
@@ -390,15 +549,16 @@ export default function App() {
         <Message message={message} />
 
         {activeView === 'dashboard' && (
-          <Dashboard stats={stats} reservas={reservas} prestamos={prestamos} inventario={inventario} />
+          <Dashboard isAdmin={isAdmin} stats={stats} reservas={reservas} prestamos={prestamos} inventario={inventario} />
         )}
         {activeView === 'reservas' && (
           <ReservasView
+            api={api}
             isAdmin={isAdmin}
             usersList={usersList}
             salas={salas}
             reservas={reservas}
-            calendarEvents={calendarEvents}
+            currentUser={currentUser}
             form={reservaForm}
             setForm={setReservaForm}
             onSubmit={submitReserva}
@@ -407,9 +567,9 @@ export default function App() {
         )}
         {activeView === 'prestamos' && (
           <PrestamosView
+            api={api}
             isAdmin={isAdmin}
             usersList={usersList}
-            prestamos={prestamos}
             instrumentos={availableInstruments}
             form={prestamoForm}
             setForm={setPrestamoForm}
@@ -427,7 +587,7 @@ export default function App() {
           />
         )}
         {activeView === 'socios' && (
-          <SociosView usersList={usersList} form={socioForm} setForm={setSocioForm} onSubmit={submitSocio} />
+          <SociosView api={api} form={socioForm} setForm={setSocioForm} onSubmit={submitSocio} />
         )}
         {activeView === 'salas' && (
           <SalasView salas={salas} form={salaForm} setForm={setSalaForm} onSubmit={submitSala} />
@@ -435,18 +595,88 @@ export default function App() {
         {activeView === 'estadisticas' && (
           <StatisticsView api={api} />
         )}
+        {activeView === 'perfil' && (
+          <PerfilView api={api} currentUser={currentUser} loadData={loadData} setCurrentUser={setCurrentUser} />
+        )}
       </section>
     </div>
   );
 }
 
-function Dashboard({ stats, reservas, prestamos, inventario }) {
-  const cards = [
+function PerfilView({ api, currentUser, loadData, setCurrentUser }) {
+  const [perfilForm, setPerfilForm] = useState({ 
+    telefono_whatsapp: currentUser.telefono_whatsapp || '', 
+    nivel_habilidad: currentUser.nivel_habilidad || 'PRINCIPIANTE' 
+  });
+  const [passwordForm, setPasswordForm] = useState({ current_password: '', new_password: '' });
+  const [message, setMessage] = useState({ text: '', type: '' });
+  
+  async function submitPerfil(e) {
+    e.preventDefault();
+    try {
+      await api('/users/me', { method: 'PUT', body: JSON.stringify(perfilForm) });
+      setMessage({ text: 'Perfil actualizado', type: 'success' });
+      setCurrentUser({ ...currentUser, ...perfilForm });
+      localStorage.setItem('currentUser', JSON.stringify({ ...currentUser, ...perfilForm }));
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
+    }
+  }
+
+  async function submitPassword(e) {
+    e.preventDefault();
+    try {
+      await api('/users/me/password', { method: 'PUT', body: JSON.stringify(passwordForm) });
+      setMessage({ text: 'Contraseña actualizada. Usa esta contraseña la próxima vez.', type: 'success' });
+      setPasswordForm({ current_password: '', new_password: '' });
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
+    }
+  }
+
+  return (
+    <div className="two-column">
+      <section className="panel">
+        <div className="panel-title"><Users size={18} /><h2>Actualizar Perfil</h2></div>
+        <Message message={message} />
+        <form className="form" onSubmit={submitPerfil}>
+          <Field label="Correo (No modificable)"><TextInput type="email" value={currentUser.email_institucional} disabled /></Field>
+          <Field label="Nombre (No modificable)"><TextInput value={currentUser.nombre_completo} disabled /></Field>
+          <Field label="WhatsApp"><TextInput value={perfilForm.telefono_whatsapp} onChange={(e) => setPerfilForm({ ...perfilForm, telefono_whatsapp: e.target.value })} required /></Field>
+          <Field label="Nivel">
+            <SelectInput value={perfilForm.nivel_habilidad} onChange={(e) => setPerfilForm({ ...perfilForm, nivel_habilidad: e.target.value })}>
+              <option value="PRINCIPIANTE">PRINCIPIANTE</option>
+              <option value="INTERMEDIO">INTERMEDIO</option>
+              <option value="AVANZADO">AVANZADO</option>
+              <option value="PROFESIONAL">PROFESIONAL</option>
+            </SelectInput>
+          </Field>
+          <button className="button primary" type="submit">Guardar Datos</button>
+        </form>
+      </section>
+
+      <section className="panel wide">
+        <div className="panel-title"><Users size={18} /><h2>Cambiar Contraseña</h2></div>
+        <form className="form" onSubmit={submitPassword}>
+          <Field label="Contraseña Actual"><TextInput type="password" value={passwordForm.current_password} onChange={(e) => setPasswordForm({ ...passwordForm, current_password: e.target.value })} required /></Field>
+          <Field label="Nueva Contraseña"><TextInput type="password" value={passwordForm.new_password} onChange={(e) => setPasswordForm({ ...passwordForm, new_password: e.target.value })} required /></Field>
+          <button className="button primary" type="submit">Cambiar Contraseña</button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function Dashboard({ isAdmin, stats, reservas, prestamos, inventario }) {
+  const cards = isAdmin ? [
     ['Socios activos', stats?.socios_activos ?? 0],
     ['Instrumentos', stats?.instrumentos ?? inventario.length],
     ['Salas disponibles', stats?.salas_disponibles ?? 0],
     ['Reservas confirmadas', stats?.reservas_confirmadas ?? reservas.length],
     ['Préstamos activos', stats?.prestamos_activos ?? prestamos.filter((p) => p.estado === 'ACTIVO').length],
+  ] : [
+    ['Tus reservas confirmadas', stats?.reservas_confirmadas ?? 0],
+    ['Tus préstamos activos', stats?.prestamos_activos ?? 0],
   ];
 
   return (
@@ -479,77 +709,122 @@ function Dashboard({ stats, reservas, prestamos, inventario }) {
   );
 }
 
-function ReservasView({ isAdmin, usersList, salas, reservas, calendarEvents, form, setForm, onSubmit, onCancel }) {
+function ReservasView({ api, isAdmin, usersList, salas, reservas, currentUser, form, setForm, onSubmit, onCancel }) {
+  const [data, setData] = useState([]);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      api(`/reservas?page=${page}&limit=5&search=${search}`).then(res => {
+        if(res.data) {
+          setData(res.data);
+          setTotal(res.total);
+        } else {
+          setData(res);
+          setTotal(res.length);
+        }
+      });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [page, search, form]);
+
   return (
-    <div className="two-column">
-      <section className="panel">
-        <div className="panel-title"><Plus size={18} /><h2>Nueva reserva</h2></div>
-        <form className="form" onSubmit={onSubmit}>
-          {isAdmin && (
-            <Field label="Socio">
-              <SelectInput value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value })} required>
-                <option value="">Selecciona un socio</option>
-                {usersList.map((user) => <option key={user.id} value={user.id}>{user.nombre_completo}</option>)}
+    <div className="two-column" style={{ display: 'grid', gridTemplateColumns: '350px 1fr', gap: '20px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        <section className="panel" style={{ height: 'fit-content' }}>
+          <div className="panel-title"><Plus size={18} /><h2>Nueva reserva</h2></div>
+          <form className="form" onSubmit={onSubmit}>
+            {isAdmin && (
+              <Field label="Socio">
+                <SelectInput value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value })} required>
+                  <option value="">Selecciona un socio</option>
+                  {usersList.map((user) => <option key={user.id} value={user.id}>{user.nombre_completo}</option>)}
+                </SelectInput>
+              </Field>
+            )}
+            <Field label="Sala">
+              <SelectInput value={form.sala_id} onChange={(e) => setForm({ ...form, sala_id: e.target.value })} required>
+                <option value="">Selecciona una sala</option>
+                {salas.filter((sala) => sala.estado === 'ACTIVA').map((sala) => (
+                  <option key={sala.id} value={sala.id}>{sala.nombre} · {sala.capacidad} personas</option>
+                ))}
               </SelectInput>
             </Field>
-          )}
-          <Field label="Sala">
-            <SelectInput value={form.sala_id} onChange={(e) => setForm({ ...form, sala_id: e.target.value })} required>
-              <option value="">Selecciona una sala</option>
-              {salas.filter((sala) => sala.estado === 'ACTIVA').map((sala) => (
-                <option key={sala.id} value={sala.id}>{sala.nombre} · {sala.capacidad} personas</option>
-              ))}
-            </SelectInput>
-          </Field>
-          <Field label="Inicio">
-            <TextInput type="datetime-local" value={form.fecha_inicio} onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })} required />
-          </Field>
-          <Field label="Fin">
-            <TextInput type="datetime-local" value={form.fecha_fin} onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })} required />
-          </Field>
-          <label className="checkline">
-            <input type="checkbox" checked={form.terminos_aceptados} onChange={(e) => setForm({ ...form, terminos_aceptados: e.target.checked })} />
-            Acepto las condiciones de uso de sala.
-          </label>
-          <button className="button primary" type="submit">Confirmar reserva</button>
-        </form>
-      </section>
+            <Field label="Inicio">
+              <TextInput type="datetime-local" value={form.fecha_inicio} onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })} required />
+            </Field>
+            <Field label="Fin">
+              <TextInput type="datetime-local" value={form.fecha_fin} onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })} required />
+            </Field>
+            <label className="checkline">
+              <input type="checkbox" checked={form.terminos_aceptados} onChange={(e) => setForm({ ...form, terminos_aceptados: e.target.checked })} />
+              Acepto las condiciones de uso de sala.
+            </label>
+            <button className="button primary" type="submit">Confirmar reserva</button>
+          </form>
+        </section>
 
-      <section className="panel wide">
-        <div className="panel-title"><CalendarDays size={18} /><h2>Calendario</h2></div>
-        <div className="calendar-list">
-          {calendarEvents.map((event) => (
-            <article className="calendar-item" key={event.id}>
-              <div>
-                <strong>{event.sala_nombre}</strong>
-                <span>{event.nombre_completo}</span>
+        <section className="panel" style={{ height: 'fit-content' }}>
+          <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CalendarDays size={18} /><h2>Lista de reservas</h2></div>
+          </div>
+          <div style={{ marginBottom: '1rem' }}>
+            <TextInput placeholder="Buscar por socio o sala..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
+          </div>
+          <div className="table" style={{ fontSize: '0.85rem' }}>
+            {data.map((reserva) => (
+              <div className="row" key={reserva.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '8px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <strong>{reserva.sala_nombre}</strong>
+                  <span style={{ color: 'var(--muted)' }}>{formatDate(reserva.fecha_inicio)}</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                  <Badge value={reserva.estado} />
+                  {reserva.estado !== 'CANCELADA' && <button className="link-button" onClick={() => { onCancel(reserva.id); setPage(page); }} style={{ fontSize: '0.8rem' }}>Cancelar</button>}
+                </div>
               </div>
-              <time>{formatDate(event.start)} - {formatDate(event.end).slice(11)}</time>
-              <Badge value={event.estado} />
-            </article>
-          ))}
-        </div>
-      </section>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem', alignItems: 'center', fontSize: '0.85rem' }}>
+            <button className="button ghost" disabled={page === 1} onClick={() => setPage(p => p - 1)} style={{ padding: '4px' }}>Ant</button>
+            <span>Pág {page} ({total})</span>
+            <button className="button ghost" disabled={page * 5 >= total} onClick={() => setPage(p => p + 1)} style={{ padding: '4px' }}>Sig</button>
+          </div>
+        </section>
+      </div>
 
-      <section className="panel full">
-        <div className="panel-title"><CalendarDays size={18} /><h2>Reservas registradas</h2></div>
-        <div className="table">
-          {reservas.map((reserva) => (
-            <div className="row" key={reserva.id}>
-              <span>{reserva.sala_nombre}</span>
-              <span>{reserva.nombre_completo || 'Mi reserva'}</span>
-              <span>{formatDate(reserva.fecha_inicio)} - {formatDate(reserva.fecha_fin).slice(11)}</span>
-              <Badge value={reserva.estado} />
-              {reserva.estado !== 'CANCELADA' && <button className="link-button" onClick={() => onCancel(reserva.id)}>Cancelar</button>}
-            </div>
-          ))}
-        </div>
-      </section>
+      <CalendarioView 
+        events={reservas} 
+        currentUser={currentUser} 
+        setForm={setForm} 
+      />
     </div>
   );
 }
 
-function PrestamosView({ isAdmin, usersList, prestamos, instrumentos, form, setForm, onSubmit, onReturn }) {
+function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, onSubmit, onReturn }) {
+  const [data, setData] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      api(`/prestamos?page=${page}&limit=5&search=${search}`).then(res => {
+        if(res.data) {
+          setData(res.data);
+          setTotal(res.total);
+        } else {
+          setData(res);
+          setTotal(res.length);
+        }
+      });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [page, search, form]);
+
   return (
     <div className="two-column">
       <section className="panel">
@@ -580,17 +855,28 @@ function PrestamosView({ isAdmin, usersList, prestamos, instrumentos, form, setF
       </section>
 
       <section className="panel wide">
-        <div className="panel-title"><PackageCheck size={18} /><h2>Préstamos</h2></div>
+        <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><PackageCheck size={18} /><h2>Préstamos</h2></div>
+          <button className="button ghost" onClick={() => exportToCSV(data, 'prestamos')}>Exportar CSV</button>
+        </div>
+        <div style={{ marginBottom: '1rem' }}>
+          <TextInput placeholder="Buscar por socio o instrumento..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
+        </div>
         <div className="table">
-          {prestamos.map((prestamo) => (
+          {data.map((prestamo) => (
             <div className="row" key={prestamo.id}>
               <span>{prestamo.instrumento_nombre}</span>
               <span>{prestamo.nombre_completo}</span>
               <span>{formatDate(prestamo.fecha_limite)}</span>
               <Badge value={prestamo.estado} />
-              {prestamo.estado === 'ACTIVO' && <button className="link-button" onClick={() => onReturn(prestamo.id)}>Devolver</button>}
+              {prestamo.estado === 'ACTIVO' && <button className="link-button" onClick={() => { onReturn(prestamo.id); setPage(page); }}>Devolver</button>}
             </div>
           ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem', alignItems: 'center' }}>
+          <button className="button ghost" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Anterior</button>
+          <span>Página {page} ({total} resultados)</span>
+          <button className="button ghost" disabled={page * 5 >= total} onClick={() => setPage(p => p + 1)}>Siguiente</button>
         </div>
       </section>
     </div>
@@ -639,7 +925,27 @@ function InventarioView({ isAdmin, inventario, form, setForm, onSubmit }) {
   );
 }
 
-function SociosView({ usersList, form, setForm, onSubmit }) {
+function SociosView({ api, form, setForm, onSubmit }) {
+  const [data, setData] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState('');
+  
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      api(`/users?page=${page}&limit=5&search=${search}`).then(res => {
+        if(res.data) {
+          setData(res.data);
+          setTotal(res.total);
+        } else {
+          setData(res);
+          setTotal(res.length);
+        }
+      });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [page, search, form]);
+
   return (
     <div className="two-column">
       <section className="panel">
@@ -667,9 +973,15 @@ function SociosView({ usersList, form, setForm, onSubmit }) {
         </form>
       </section>
       <section className="panel wide">
-        <div className="panel-title"><Users size={18} /><h2>Socios</h2></div>
+        <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users size={18} /><h2>Socios</h2></div>
+          <button className="button ghost" onClick={() => exportToCSV(data, 'socios')}>Exportar CSV</button>
+        </div>
+        <div style={{ marginBottom: '1rem' }}>
+          <TextInput placeholder="Buscar por nombre o correo..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
+        </div>
         <div className="table">
-          {usersList.map((user) => (
+          {data.map((user) => (
             <div className="row" key={user.id}>
               <span>{user.nombre_completo}</span>
               <span>{user.email_institucional}</span>
@@ -678,6 +990,11 @@ function SociosView({ usersList, form, setForm, onSubmit }) {
               <Badge value={user.estado} />
             </div>
           ))}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '1rem', alignItems: 'center' }}>
+          <button className="button ghost" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Anterior</button>
+          <span>Página {page} ({total} resultados)</span>
+          <button className="button ghost" disabled={page * 5 >= total} onClick={() => setPage(p => p + 1)}>Siguiente</button>
         </div>
       </section>
     </div>

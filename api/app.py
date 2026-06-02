@@ -3,9 +3,13 @@ import hashlib
 import hmac
 import os
 from datetime import date, datetime, timedelta
+from functools import wraps
+import string
+import random
 
 import pymysql
 import requests
+import jwt
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
@@ -24,7 +28,41 @@ DB_PASSWORD = os.environ.get("DB_PASSWORD", "clubmusica_secret_2026")
 DB_NAME = os.environ.get("DB_NAME", "club_musica")
 WHATSAPP_BRIDGE_URL = os.environ.get("WHATSAPP_BRIDGE_URL", "http://whatsapp-bridge:3002")
 DEFAULT_PASSWORD = os.environ.get("DEFAULT_USER_PASSWORD", "Musica2026!")
+JWT_SECRET = os.environ.get("JWT_SECRET", "super-secret-key-2026")
+JWT_ALGORITHM = "HS256"
 SCHEMA_READY = False
+
+def get_user_from_token():
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return None
+    token = auth_header.split(" ")[1]
+    try:
+        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.InvalidTokenError:
+        return None
+
+def require_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user = get_user_from_token()
+        if not user:
+            return error("Token inválido o expirado", 401)
+        request.user = user
+        return f(*args, **kwargs)
+    return decorated
+
+def require_admin(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user = get_user_from_token()
+        if not user:
+            return error("Token inválido o expirado", 401)
+        if user.get("rol") != "ADMIN":
+            return error("No tienes permisos para realizar esta acción", 403)
+        request.user = user
+        return f(*args, **kwargs)
+    return decorated
 
 
 def get_db_connection():
@@ -337,10 +375,20 @@ def login():
 
             is_admin = socio.get("rol") == "ADMIN" or socio["email"] == "juan.sandoval@pucesa.edu.ec"
             conn.commit()
-            return ok({"user": socio_public(socio), "is_admin": is_admin})
+            
+            token_payload = {
+                "id": socio["id"],
+                "email": socio["email"],
+                "rol": "ADMIN" if is_admin else "SOCIO",
+                "exp": datetime.utcnow() + timedelta(days=7)
+            }
+            token = jwt.encode(token_payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+            
+            return ok({"user": socio_public(socio), "is_admin": is_admin, "token": token})
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 500)
+        print("Login Error:", exc)
+        return error("Error interno en el servidor al intentar iniciar sesión", 500)
     finally:
         conn.close()
 
@@ -350,16 +398,80 @@ def register():
     return create_user()
 
 
-@app.route("/api/users", methods=["GET", "POST"])
-def users_collection():
-    if request.method == "POST":
-        return create_user()
+@app.route("/api/auth/recover", methods=["POST"])
+def recover_password():
+    data = parse_json()
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return error("Correo requerido", 400)
 
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT * FROM SOCIO ORDER BY nombre")
-            return ok([socio_public(row) for row in cursor.fetchall()])
+            cursor.execute("SELECT id, nombre, telefono FROM SOCIO WHERE email = %s AND estado = 'ACTIVO'", (email,))
+            socio = cursor.fetchone()
+            if not socio:
+                return error("No se encontró un usuario activo con ese correo", 404)
+            
+            pin = ''.join(random.choices(string.digits, k=6))
+            new_hash = hash_password(pin)
+            
+            cursor.execute(
+                "UPDATE SOCIO SET password_hash = %s, password_salt = '' WHERE id = %s",
+                (new_hash, socio["id"])
+            )
+            conn.commit()
+            
+            primer_nombre = socio["nombre"].split(" ")[0]
+            notify_whatsapp(
+                socio["telefono"],
+                f"Hola {primer_nombre}, se ha reseteado tu contraseña. Tu PIN temporal es: {pin}\nPor favor, ingresa al sistema y cámbiala en tu Perfil."
+            )
+            return ok({"message": "Se ha enviado un código temporal a tu WhatsApp"})
+    except Exception as exc:
+        conn.rollback()
+        print("Recover password error:", exc)
+        return error("Error interno al intentar recuperar la contraseña", 500)
+    finally:
+        conn.close()
+
+
+@app.route("/api/users", methods=["GET", "POST"])
+@require_auth
+def users_collection():
+    if request.method == "POST":
+        if request.user.get("rol") != "ADMIN":
+            return error("No tienes permisos para crear usuarios", 403)
+        return create_user()
+
+    page = request.args.get("page", type=int)
+    limit = request.args.get("limit", type=int)
+    search = request.args.get("search", "").strip()
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            sql = "SELECT * FROM SOCIO WHERE 1=1"
+            params = []
+            if search:
+                sql += " AND (nombre LIKE %s OR email LIKE %s)"
+                params.extend([f"%{search}%", f"%{search}%"])
+            
+            cursor.execute(sql.replace("*", "COUNT(*) as total", 1), params)
+            total = cursor.fetchone()["total"]
+            
+            sql += " ORDER BY nombre"
+            if page and limit:
+                offset = (page - 1) * limit
+                sql += " LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
+                
+            cursor.execute(sql, params)
+            data = [socio_public(row) for row in cursor.fetchall()]
+            
+            if page and limit:
+                return ok({"data": data, "total": total, "page": page, "limit": limit})
+            return ok(data)
     finally:
         conn.close()
 
@@ -401,12 +513,14 @@ def create_user():
         return error("Ya existe un socio con ese correo", 409)
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        print("Create User Error:", exc)
+        return error("Error al crear el socio", 400)
     finally:
         conn.close()
 
 
 @app.route("/api/users/<int:user_id>", methods=["GET", "PUT", "DELETE"])
+@require_auth
 def user_detail(user_id):
     conn = get_db_connection()
     try:
@@ -443,10 +557,82 @@ def user_detail(user_id):
         conn.close()
 
 
+@app.route("/api/users/me", methods=["PUT"])
+@require_auth
+def update_my_profile():
+    data = parse_json()
+    updates = []
+    if "telefono_whatsapp" in data:
+        updates.append(("telefono", data["telefono_whatsapp"].strip()))
+    if "nivel_habilidad" in data:
+        updates.append(("nivel_habilidad", normalize_level(data["nivel_habilidad"])))
+    
+    if not updates:
+        return error("No hay campos válidos para actualizar")
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            sql = ", ".join([f"{column} = %s" for column, _ in updates])
+            cursor.execute(
+                f"UPDATE SOCIO SET {sql} WHERE id = %s", 
+                [value for _, value in updates] + [request.user["id"]]
+            )
+            conn.commit()
+            return ok({"message": "Perfil actualizado correctamente"})
+    except Exception as exc:
+        conn.rollback()
+        print("Update profile error:", exc)
+        return error("Error interno al actualizar perfil", 500)
+    finally:
+        conn.close()
+
+
+@app.route("/api/users/me/password", methods=["PUT"])
+@require_auth
+def update_my_password():
+    data = parse_json()
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+    
+    if not current_password or not new_password:
+        return error("Se requiere contraseña actual y nueva", 400)
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT password_hash FROM SOCIO WHERE id = %s", (request.user["id"],))
+            socio = cursor.fetchone()
+            
+            valid = verify_password(current_password, socio.get("password_hash"))
+            if not valid and socio.get("password_hash") in ("", None):
+                valid = current_password == DEFAULT_PASSWORD
+                
+            if not valid:
+                return error("La contraseña actual es incorrecta", 401)
+                
+            new_hash = hash_password(new_password)
+            cursor.execute(
+                "UPDATE SOCIO SET password_hash = %s, password_salt = '' WHERE id = %s",
+                (new_hash, request.user["id"])
+            )
+            conn.commit()
+            return ok({"message": "Contraseña actualizada correctamente"})
+    except Exception as exc:
+        conn.rollback()
+        print("Update password error:", exc)
+        return error("Error interno al actualizar contraseña", 500)
+    finally:
+        conn.close()
+
+
 @app.route("/api/inventario", methods=["GET", "POST"])
 @app.route("/api/instrumentos", methods=["GET", "POST"])
+@require_auth
 def inventory_collection():
     if request.method == "POST":
+        if request.user.get("rol") != "ADMIN":
+            return error("No tienes permisos para agregar instrumentos", 403)
         return create_inventory_item()
 
     conn = get_db_connection()
@@ -472,6 +658,7 @@ def inventory_collection():
 
 
 @app.route("/api/instrumentos/disponibles", methods=["GET"])
+@require_auth
 def available_instruments():
     conn = get_db_connection()
     try:
@@ -528,13 +715,15 @@ def create_inventory_item():
             return ok({"message": "Instrumento agregado exitosamente", "id": cursor.lastrowid}, 201)
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        print("Create Inventory Error:", exc)
+        return error("Error al agregar el instrumento", 400)
     finally:
         conn.close()
 
 
 @app.route("/api/inventario/<int:item_id>", methods=["GET", "PUT"])
 @app.route("/api/instrumentos/<int:item_id>", methods=["GET", "PUT"])
+@require_auth
 def inventory_detail(item_id):
     conn = get_db_connection()
     try:
@@ -568,17 +757,21 @@ def inventory_detail(item_id):
             return ok({"message": "Instrumento actualizado"})
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        print("Update Inventory Error:", exc)
+        return error("Error al actualizar el instrumento", 400)
     finally:
         conn.close()
 
 
 @app.route("/api/salas", methods=["GET", "POST"])
+@require_auth
 def rooms_collection():
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
             if request.method == "POST":
+                if request.user.get("rol") != "ADMIN":
+                    return error("No tienes permisos para crear salas", 403)
                 data = parse_json()
                 required = require_fields(data, ["nombre", "capacidad"])
                 if required:
@@ -603,12 +796,14 @@ def rooms_collection():
             return ok(serialize_rows(cursor.fetchall()))
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        print("Salas Error:", exc)
+        return error("Error interno al procesar la sala", 400)
     finally:
         conn.close()
 
 
 @app.route("/api/salas/<int:sala_id>", methods=["PUT"])
+@require_admin
 def room_detail(sala_id):
     data = parse_json()
     updates = []
@@ -631,21 +826,29 @@ def room_detail(sala_id):
             return ok({"message": "Sala actualizada"})
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        print("Room Update Error:", exc)
+        return error("Error al actualizar la sala", 400)
     finally:
         conn.close()
 
 
 @app.route("/api/reservas", methods=["GET", "POST"])
+@require_auth
 def reservations_collection():
     if request.method == "POST":
         return create_reservation()
 
+    page = request.args.get("page", type=int)
+    limit = request.args.get("limit", type=int)
+    search = request.args.get("search", "").strip()
+    
+    is_admin = request.user.get("rol") == "ADMIN"
+    user_id = request.user.get("id")
+
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                """
+            sql = """
                 SELECT r.id, r.socio_id AS user_id, r.sala_id, r.fecha_inicio, r.fecha_fin,
                        r.estado, r.observaciones, r.fecha_creacion,
                        s.nombre AS nombre_completo, sa.nombre AS sala_nombre
@@ -653,17 +856,47 @@ def reservations_collection():
                 JOIN SOCIO s ON s.id = r.socio_id
                 JOIN SALA sa ON sa.id = r.sala_id
                 WHERE r.eliminado_en IS NULL
-                ORDER BY r.fecha_inicio DESC
-                """
-            )
-            return ok(serialize_rows(cursor.fetchall()))
+            """
+            params = []
+            
+            if not is_admin:
+                sql += " AND r.socio_id = %s"
+                params.append(user_id)
+            
+            if search:
+                sql += " AND (s.nombre LIKE %s OR sa.nombre LIKE %s)"
+                params.extend([f"%{search}%", f"%{search}%"])
+                
+            count_sql = "SELECT COUNT(*) as total FROM RESERVA r JOIN SOCIO s ON s.id = r.socio_id JOIN SALA sa ON sa.id = r.sala_id WHERE r.eliminado_en IS NULL"
+            count_params = []
+            if not is_admin:
+                count_sql += " AND r.socio_id = %s"
+                count_params.append(user_id)
+                
+            if search:
+                count_sql += " AND (s.nombre LIKE %s OR sa.nombre LIKE %s)"
+                count_params.extend([f"%{search}%", f"%{search}%"])
+            
+            cursor.execute(count_sql, count_params)
+            total = cursor.fetchone()["total"]
+
+            sql += " ORDER BY r.fecha_inicio DESC"
+            if page and limit:
+                offset = (page - 1) * limit
+                sql += " LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
+
+            cursor.execute(sql, params)
+            data = serialize_rows(cursor.fetchall())
+            if page and limit:
+                return ok({"data": data, "total": total, "page": page, "limit": limit})
+            return ok(data)
     finally:
         conn.close()
 
 
 def check_reservation_rules(fecha_inicio, fecha_fin):
-    from datetime import datetime, timedelta
-    ahora_local = datetime.utcnow() - timedelta(hours=5)
+    ahora_local = datetime.now()
     if fecha_inicio < ahora_local:
         return "La fecha de inicio no puede estar en el pasado"
     if fecha_fin <= fecha_inicio:
@@ -683,6 +916,7 @@ def check_reservation_rules(fecha_inicio, fecha_fin):
 
 
 @app.route("/api/reservas/validar", methods=["POST"])
+@require_auth
 def validate_reservation():
     data = parse_json()
     required = require_fields(data, ["sala_id", "fecha_inicio", "fecha_fin"])
@@ -767,12 +1001,14 @@ def create_reservation():
             return ok({"message": "Reserva creada exitosamente", "id": reserva_id, "whatsapp_enviado": notified}, 201)
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        print("Create Reservation Error:", exc)
+        return error("Error interno al crear la reserva", 400)
     finally:
         conn.close()
 
 
 @app.route("/api/reservas/<int:user_id>", methods=["GET"])
+@require_auth
 def get_reservas_usuario(user_id):
     conn = get_db_connection()
     try:
@@ -794,25 +1030,43 @@ def get_reservas_usuario(user_id):
 
 
 @app.route("/api/reservas/calendario", methods=["GET"])
+@require_auth
 def reservation_calendar():
+    start = request.args.get("start")
+    end = request.args.get("end")
+    is_admin = request.user.get("rol") == "ADMIN"
+    user_id = request.user.get("id")
+
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT r.id, r.fecha_inicio AS start, r.fecha_fin AS end, r.estado,
+            sql = """
+                SELECT r.id, r.socio_id, r.fecha_inicio AS start, r.fecha_fin AS end, r.estado,
                        s.nombre AS nombre_completo, sa.nombre AS sala_nombre
                 FROM RESERVA r
                 JOIN SOCIO s ON s.id = r.socio_id
                 JOIN SALA sa ON sa.id = r.sala_id
                 WHERE r.eliminado_en IS NULL
                   AND r.estado IN ('CONFIRMADA', 'COMPLETADA', 'REPROGRAMADA')
-                ORDER BY r.fecha_inicio
-                """
-            )
+            """
+            params = []
+            if start:
+                sql += " AND r.fecha_inicio >= %s"
+                params.append(start)
+            if end:
+                sql += " AND r.fecha_fin <= %s"
+                params.append(end)
+            
+            sql += " ORDER BY r.fecha_inicio"
+            cursor.execute(sql, params)
+            
             events = []
             for row in serialize_rows(cursor.fetchall()):
-                row["title"] = f"{row['sala_nombre']} - {row['nombre_completo']}"
+                if is_admin or row["socio_id"] == user_id:
+                    row["title"] = f"{row['sala_nombre']} - {row['nombre_completo']}"
+                else:
+                    row["title"] = f"{row['sala_nombre']} - Reservada"
+                    row["nombre_completo"] = "Ocupado"
                 events.append(row)
             return ok(events)
     finally:
@@ -820,6 +1074,7 @@ def reservation_calendar():
 
 
 @app.route("/api/reservas/<int:reserva_id>", methods=["DELETE"])
+@require_auth
 def cancel_reservation(reserva_id):
     conn = get_db_connection()
     try:
@@ -836,14 +1091,19 @@ def cancel_reservation(reserva_id):
             return ok({"message": "Reserva cancelada"})
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        print("Cancel Reservation Error:", exc)
+        return error("Error al cancelar la reserva", 400)
     finally:
         conn.close()
 
 
 @app.route("/api/prestamos", methods=["GET"])
+@require_auth
 def loans_collection():
     estado = request.args.get("estado")
+    page = request.args.get("page", type=int)
+    limit = request.args.get("limit", type=int)
+    search = request.args.get("search", "").strip()
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
@@ -862,14 +1122,38 @@ def loans_collection():
             if estado:
                 sql += " AND p.estado = %s"
                 params.append(normalize_prestamo_estado(estado))
+                
+            if search:
+                sql += " AND (s.nombre LIKE %s OR i.nombre LIKE %s OR i.numero_serie LIKE %s)"
+                params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+                
+            # Count total
+            count_sql = "SELECT COUNT(*) as total FROM PRESTAMO p JOIN SOCIO s ON s.id = p.socio_id JOIN INSTRUMENTO i ON i.id = p.instrumento_id JOIN TIPO_INSTRUMENTO ti ON ti.id = i.tipo_instrumento_id WHERE p.eliminado_en IS NULL"
+            if estado:
+                count_sql += " AND p.estado = %s"
+            if search:
+                count_sql += " AND (s.nombre LIKE %s OR i.nombre LIKE %s OR i.numero_serie LIKE %s)"
+            cursor.execute(count_sql, params)
+            total = cursor.fetchone()["total"]
+
             sql += " ORDER BY p.fecha_salida DESC"
+            if page and limit:
+                offset = (page - 1) * limit
+                sql += " LIMIT %s OFFSET %s"
+                params.extend([limit, offset])
+                
             cursor.execute(sql, params)
-            return ok(serialize_rows(cursor.fetchall()))
+            data = serialize_rows(cursor.fetchall())
+            
+            if page and limit:
+                return ok({"data": data, "total": total, "page": page, "limit": limit})
+            return ok(data)
     finally:
         conn.close()
 
 
 @app.route("/api/prestamos/activos", methods=["GET"])
+@require_auth
 def active_loans():
     return loans_by_status("ACTIVO")
 
@@ -899,6 +1183,7 @@ def loans_by_status(status):
 
 
 @app.route("/api/prestamos/solicitar", methods=["POST"])
+@require_auth
 def request_loan():
     data = parse_json()
     required = require_fields(data, ["user_id", "inventario_id", "fecha_limite"])
@@ -967,12 +1252,14 @@ def request_loan():
             return ok({"message": "Préstamo registrado", "id": loan_id}, 201)
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        print("Request Loan Error:", exc)
+        return error("Error interno al solicitar el préstamo", 400)
     finally:
         conn.close()
 
 
 @app.route("/api/prestamos/<int:prestamo_id>/devolver", methods=["POST"])
+@require_auth
 def return_loan(prestamo_id):
     data = parse_json()
     estado_instrumento = normalize_instrumento_estado(data.get("estado_instrumento", "DISPONIBLE"))
@@ -1005,29 +1292,41 @@ def return_loan(prestamo_id):
             return ok({"message": "Préstamo devuelto"})
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        print("Return Loan Error:", exc)
+        return error("Error al registrar la devolución", 400)
     finally:
         conn.close()
 
 
 @app.route("/api/dashboard/stats", methods=["GET"])
+@require_auth
 def dashboard_stats():
     conn = get_db_connection()
+    is_admin = request.user.get("rol") == "ADMIN"
+    user_id = request.user.get("id")
+    
     try:
         with conn.cursor() as cursor:
             stats = {}
-            queries = {
-                "socios_activos": "SELECT COUNT(*) total FROM SOCIO WHERE estado = 'ACTIVO'",
-                "instrumentos": "SELECT COUNT(*) total FROM INSTRUMENTO WHERE estado <> 'BAJA'",
-                "salas_disponibles": "SELECT COUNT(*) total FROM SALA WHERE estado = 'ACTIVA'",
-                "reservas_confirmadas": "SELECT COUNT(*) total FROM RESERVA WHERE estado = 'CONFIRMADA' AND eliminado_en IS NULL",
-                "prestamos_activos": "SELECT COUNT(*) total FROM PRESTAMO WHERE estado = 'ACTIVO' AND eliminado_en IS NULL",
-            }
-            for key, sql in queries.items():
-                cursor.execute(sql)
+            if is_admin:
+                queries = {
+                    "socios_activos": ("SELECT COUNT(*) total FROM SOCIO WHERE estado = 'ACTIVO'", []),
+                    "instrumentos": ("SELECT COUNT(*) total FROM INSTRUMENTO WHERE estado <> 'BAJA'", []),
+                    "salas_disponibles": ("SELECT COUNT(*) total FROM SALA WHERE estado = 'ACTIVA'", []),
+                    "reservas_confirmadas": ("SELECT COUNT(*) total FROM RESERVA WHERE estado = 'CONFIRMADA' AND eliminado_en IS NULL", []),
+                    "prestamos_activos": ("SELECT COUNT(*) total FROM PRESTAMO WHERE estado = 'ACTIVO' AND eliminado_en IS NULL", []),
+                }
+            else:
+                queries = {
+                    "reservas_confirmadas": ("SELECT COUNT(*) total FROM RESERVA WHERE estado = 'CONFIRMADA' AND eliminado_en IS NULL AND socio_id = %s", [user_id]),
+                    "prestamos_activos": ("SELECT COUNT(*) total FROM PRESTAMO WHERE estado = 'ACTIVO' AND eliminado_en IS NULL AND socio_id = %s", [user_id]),
+                }
+
+            for key, (sql, params) in queries.items():
+                cursor.execute(sql, params)
                 stats[key] = cursor.fetchone()["total"]
-            cursor.execute(
-                """
+            
+            sql_proximas = """
                 SELECT r.id, r.fecha_inicio, s.nombre AS nombre_completo, sa.nombre AS sala_nombre, r.estado
                 FROM RESERVA r
                 JOIN SOCIO s ON s.id = r.socio_id
@@ -1035,10 +1334,15 @@ def dashboard_stats():
                 WHERE r.fecha_inicio >= NOW()
                   AND r.estado = 'CONFIRMADA'
                   AND r.eliminado_en IS NULL
-                ORDER BY r.fecha_inicio
-                LIMIT 5
-                """
-            )
+            """
+            params_proximas = []
+            if not is_admin:
+                sql_proximas += " AND r.socio_id = %s"
+                params_proximas.append(user_id)
+            
+            sql_proximas += " ORDER BY r.fecha_inicio LIMIT 5"
+            
+            cursor.execute(sql_proximas, params_proximas)
             stats["proximas_reservas"] = serialize_rows(cursor.fetchall())
             return ok(stats)
     finally:
@@ -1046,6 +1350,7 @@ def dashboard_stats():
 
 
 @app.route("/api/auditoria/reservas", methods=["GET"])
+@require_admin
 def audit_reservations():
     conn = get_db_connection()
     try:
@@ -1057,6 +1362,7 @@ def audit_reservations():
 
 
 @app.route("/api/auditoria/prestamos", methods=["GET"])
+@require_admin
 def audit_loans():
     conn = get_db_connection()
     try:
@@ -1068,6 +1374,7 @@ def audit_loans():
 
 
 @app.route("/api/auditoria/instrumentos", methods=["GET"])
+@require_admin
 def audit_instruments():
     conn = get_db_connection()
     try:
@@ -1105,7 +1412,50 @@ def trigger_notifications():
     finally:
         conn.close()
 
+def check_overdue_loans():
+    print("Ejecutando revisión de préstamos vencidos...")
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT p.id, p.socio_id, s.telefono, s.nombre, i.nombre as instrumento_nombre
+                FROM PRESTAMO p
+                JOIN SOCIO s ON p.socio_id = s.id
+                JOIN INSTRUMENTO i ON p.instrumento_id = i.id
+                WHERE p.estado = 'ACTIVO' AND p.fecha_limite < NOW() AND p.eliminado_en IS NULL
+                """
+            )
+            vencidos = cursor.fetchall()
+            
+            for p in vencidos:
+                cursor.execute("UPDATE PRESTAMO SET estado = 'VENCIDO' WHERE id = %s", (p["id"],))
+                primer_nombre = p["nombre"].split(" ")[0]
+                notify_whatsapp(
+                    p["telefono"], 
+                    f"⚠️ ALERTA: Hola {primer_nombre}, el préstamo de tu instrumento '{p['instrumento_nombre']}' ha VENCIDO. Por favor devuélvelo inmediatamente para evitar sanciones."
+                )
+            
+            if vencidos:
+                conn.commit()
+                print(f"Se actualizaron {len(vencidos)} préstamos a estado VENCIDO.")
+    except Exception as exc:
+        conn.rollback()
+        print("Error en Cron Job check_overdue_loans:", exc)
+    finally:
+        conn.close()
+
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    scheduler = BackgroundScheduler()
+    # Ejecuta cada 1 minuto para que podamos probarlo rápidamente
+    scheduler.add_job(func=check_overdue_loans, trigger="interval", minutes=1)
+    scheduler.start()
+except ImportError:
+    pass
+
 @app.route("/api/statistics/loans", methods=["GET"])
+@require_auth
 def statistics_loans():
     conn = get_db_connection()
     try:
