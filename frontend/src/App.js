@@ -753,10 +753,22 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, currentUser, f
               </SelectInput>
             </Field>
             <Field label="Inicio">
-              <TextInput type="datetime-local" value={form.fecha_inicio} onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })} required />
+              <TextInput 
+                type="datetime-local" 
+                value={form.fecha_inicio} 
+                onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })} 
+                min={new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+                required 
+              />
             </Field>
             <Field label="Fin">
-              <TextInput type="datetime-local" value={form.fecha_fin} onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })} required />
+              <TextInput 
+                type="datetime-local" 
+                value={form.fecha_fin} 
+                onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })} 
+                min={form.fecha_inicio || new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+                required 
+              />
             </Field>
             <label className="checkline">
               <input type="checkbox" checked={form.terminos_aceptados} onChange={(e) => setForm({ ...form, terminos_aceptados: e.target.checked })} />
