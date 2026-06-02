@@ -558,6 +558,7 @@ export default function App() {
             usersList={usersList}
             salas={salas}
             reservas={reservas}
+            calendarEvents={calendarEvents}
             currentUser={currentUser}
             form={reservaForm}
             setForm={setReservaForm}
@@ -709,7 +710,7 @@ function Dashboard({ isAdmin, stats, reservas, prestamos, inventario }) {
   );
 }
 
-function ReservasView({ api, isAdmin, usersList, salas, reservas, currentUser, form, setForm, onSubmit, onCancel }) {
+function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents, currentUser, form, setForm, onSubmit, onCancel }) {
   const [data, setData] = useState([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -808,7 +809,7 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, currentUser, f
       </div>
 
       <CalendarioView 
-        events={reservas} 
+        events={calendarEvents || []} 
         currentUser={currentUser} 
         setForm={setForm} 
       />
