@@ -4,7 +4,7 @@ import { BarChart3 } from 'lucide-react';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
 
-export default function StatisticsView({ api }) {
+export default function StatisticsView({ api, isAdmin }) {
   const [data, setData] = useState({ by_type: [], by_instrument: [] });
   const [loading, setLoading] = useState(true);
   const [groupBy, setGroupBy] = useState('type'); // 'type' or 'instrument'
@@ -46,6 +46,7 @@ export default function StatisticsView({ api }) {
   return (
     <div className="stack">
 
+      {isAdmin && (
       <section className="panel wide" style={{ marginBottom: '24px', background: 'linear-gradient(135deg, #eff6ff, #dbeafe)', border: '1.5px solid #bfdbfe' }}>
         <div className="panel-title"><BarChart3 size={18} /><h2>Generador de Reportes</h2></div>
         <p style={{ fontSize: '0.9rem', color: '#1e3a8a', marginBottom: '16px' }}>Genera reportes detallados en CSV utilizando filtros de fecha para un mejor análisis de la información.</p>
@@ -61,6 +62,7 @@ export default function StatisticsView({ api }) {
           <button className="button primary" onClick={handleExportCSV} style={{ padding: '0.6rem 1.5rem', background: '#2563eb', border: 'none' }}>Exportar Reservas</button>
         </div>
       </section>
+      )}
 
       <section className="panel wide">
         <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>

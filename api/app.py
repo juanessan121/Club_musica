@@ -653,6 +653,9 @@ def users_collection():
             return error("No tienes permisos para crear usuarios", 403)
         return create_user()
 
+    if request.user.get("rol") != "ADMIN":
+        return error("Solo administradores pueden listar socios", 403)
+
     page = request.args.get("page", type=int)
     limit = request.args.get("limit", type=int)
     search = request.args.get("search", "").strip()
@@ -761,6 +764,16 @@ def socio_historial(socio_id):
 @app.route("/api/users/<int:user_id>", methods=["GET", "PUT", "DELETE"])
 @require_auth
 def user_detail(user_id):
+    is_admin = request.user.get("rol") == "ADMIN"
+    requester_id = request.user.get("id")
+
+    if request.method == "GET":
+        if not is_admin and requester_id != user_id:
+            return error("No autorizado", 403)
+    elif request.method in ("PUT", "DELETE"):
+        if not is_admin:
+            return error("Solo administradores pueden modificar socios", 403)
+
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
@@ -770,11 +783,59 @@ def user_detail(user_id):
                 return ok(socio_public(socio)) if socio else error("Socio no encontrado", 404)
 
             if request.method == "DELETE":
+                # An admin cannot inactivate themselves
+                if user_id == requester_id:
+                    return error(
+                        "No puedes inactivar tu propia cuenta. Pídele a otro administrador que lo haga.",
+                        403,
+                    )
+                # Prevent leaving the system with zero active admins
+                cursor.execute("SELECT rol FROM SOCIO WHERE id = %s", (user_id,))
+                target = cursor.fetchone()
+                if target and target.get("rol") == "ADMIN":
+                    cursor.execute(
+                        "SELECT COUNT(*) AS total FROM SOCIO WHERE rol = 'ADMIN' AND estado = 'ACTIVO' AND id != %s",
+                        (user_id,),
+                    )
+                    if cursor.fetchone()["total"] == 0:
+                        return error(
+                            "No puedes inactivar al único administrador activo. "
+                            "Asigna primero otro administrador.",
+                            403,
+                        )
                 cursor.execute("UPDATE SOCIO SET estado = 'INACTIVO' WHERE id = %s", (user_id,))
                 conn.commit()
                 return ok({"message": "Socio inactivado"})
 
             data = parse_json()
+
+            # An admin can never change their own rol — only another admin can do it
+            if "rol" in data and user_id == requester_id:
+                return error(
+                    "No puedes cambiar tu propio rol. Pídele a otro administrador que lo haga.",
+                    403,
+                )
+
+            # Prevent leaving the system with zero active admins
+            if "rol" in data:
+                new_rol = normalize_role(data.get("rol"))
+                if new_rol != "ADMIN":
+                    cursor.execute(
+                        "SELECT rol FROM SOCIO WHERE id = %s", (user_id,)
+                    )
+                    target_socio = cursor.fetchone()
+                    if target_socio and target_socio.get("rol") == "ADMIN":
+                        cursor.execute(
+                            "SELECT COUNT(*) AS total FROM SOCIO WHERE rol = 'ADMIN' AND estado = 'ACTIVO' AND id != %s",
+                            (user_id,),
+                        )
+                        if cursor.fetchone()["total"] == 0:
+                            return error(
+                                "No puedes degradar al único administrador activo. "
+                                "Asigna primero otro administrador.",
+                                403,
+                            )
+
             mapping = {
                 "nombre_completo": ("nombre", lambda value: value.strip()),
                 "telefono_whatsapp": ("telefono", lambda value: value.strip()),
@@ -1283,6 +1344,8 @@ def create_reservation():
 @app.route("/api/reservas/<int:user_id>", methods=["GET"])
 @require_auth
 def get_reservas_usuario(user_id):
+    if request.user.get("rol") != "ADMIN" and request.user.get("id") != user_id:
+        return error("No autorizado", 403)
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
@@ -1354,7 +1417,7 @@ def cancel_reservation(reserva_id):
         with conn.cursor() as cursor:
             # Get reservation + socio details before canceling
             cursor.execute("""
-                SELECT r.id, r.fecha_inicio, r.fecha_fin, r.sala_id,
+                SELECT r.id, r.socio_id, r.fecha_inicio, r.fecha_fin, r.sala_id,
                        s.nombre, s.telefono, s.email, sa.nombre AS sala_nombre
                 FROM RESERVA r
                 JOIN SOCIO s ON s.id = r.socio_id
@@ -1362,6 +1425,12 @@ def cancel_reservation(reserva_id):
                 WHERE r.id = %s AND r.eliminado_en IS NULL
             """, (reserva_id,))
             reserva = cursor.fetchone()
+
+            if reserva:
+                is_admin = request.user.get("rol") == "ADMIN"
+                is_owner = request.user.get("id") == reserva["socio_id"]
+                if not is_admin and not is_owner:
+                    return error("No autorizado para cancelar esta reserva", 403)
 
             cursor.execute("""
                 UPDATE RESERVA
@@ -1395,6 +1464,8 @@ def cancel_reservation(reserva_id):
 @app.route("/api/prestamos", methods=["GET"])
 @require_auth
 def loans_collection():
+    is_admin = request.user.get("rol") == "ADMIN"
+    requester_id = request.user.get("id")
     estado = request.args.get("estado")
     page = request.args.get("page", type=int)
     limit = request.args.get("limit", type=int)
@@ -1414,21 +1485,30 @@ def loans_collection():
                 WHERE p.eliminado_en IS NULL
             """
             params = []
+            if not is_admin:
+                sql += " AND p.socio_id = %s"
+                params.append(requester_id)
             if estado:
                 sql += " AND p.estado = %s"
                 params.append(normalize_prestamo_estado(estado))
-                
-            if search:
+
+            if search and is_admin:
                 sql += " AND (s.nombre LIKE %s OR i.nombre LIKE %s OR i.numero_serie LIKE %s)"
                 params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
-                
+
             # Count total
             count_sql = "SELECT COUNT(*) as total FROM PRESTAMO p JOIN SOCIO s ON s.id = p.socio_id JOIN INSTRUMENTO i ON i.id = p.instrumento_id JOIN TIPO_INSTRUMENTO ti ON ti.id = i.tipo_instrumento_id WHERE p.eliminado_en IS NULL"
+            count_params = []
+            if not is_admin:
+                count_sql += " AND p.socio_id = %s"
+                count_params.append(requester_id)
             if estado:
                 count_sql += " AND p.estado = %s"
-            if search:
+                count_params.append(normalize_prestamo_estado(estado))
+            if search and is_admin:
                 count_sql += " AND (s.nombre LIKE %s OR i.nombre LIKE %s OR i.numero_serie LIKE %s)"
-            cursor.execute(count_sql, params)
+                count_params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+            cursor.execute(count_sql, count_params)
             total = cursor.fetchone()["total"]
 
             sql += " ORDER BY p.fecha_salida DESC"
@@ -1581,6 +1661,8 @@ def request_loan():
 @app.route("/api/prestamos/<int:prestamo_id>/devolver", methods=["POST"])
 @require_auth
 def return_loan(prestamo_id):
+    if request.user.get("rol") != "ADMIN":
+        return error("Solo administradores pueden registrar devoluciones", 403)
     data = parse_json()
     estado_instrumento = normalize_instrumento_estado(data.get("estado_instrumento", "DISPONIBLE"))
     if estado_instrumento == "PRESTADO":
@@ -1887,7 +1969,7 @@ def public_disponibilidad():
 
 
 @app.route('/api/reportes/reservas', methods=['GET'])
-@require_auth
+@require_admin
 def export_reservas():
     conn = get_db_connection()
     try:
@@ -1941,7 +2023,7 @@ def export_reservas():
 
 
 @app.route('/api/reportes/prestamos', methods=['GET'])
-@require_auth
+@require_admin
 def export_prestamos():
     conn = get_db_connection()
     try:

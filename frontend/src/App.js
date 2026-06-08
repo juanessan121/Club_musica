@@ -287,10 +287,10 @@ export default function App() {
       ...options,
     });
     const data = await response.json().catch(() => ({}));
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       if (currentUser) {
         logout();
-        throw new Error(data.error || 'Sesión expirada o sin permisos');
+        throw new Error(data.error || 'Sesión expirada. Inicia sesión de nuevo.');
       }
     }
     if (!response.ok) throw new Error(data.error || 'Error de servidor');
@@ -638,7 +638,7 @@ export default function App() {
           <SalasView salas={salas} form={salaForm} setForm={setSalaForm} onSubmit={submitSala} />
         )}
         {activeView === 'estadisticas' && (
-          <StatisticsView api={api} />
+          <StatisticsView api={api} isAdmin={isAdmin} />
         )}
         {activeView === 'perfil' && (
           <PerfilView api={api} currentUser={currentUser} loadData={loadData} setCurrentUser={setCurrentUser} />
