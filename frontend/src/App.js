@@ -44,7 +44,6 @@ function resolveApiUrl() {
 }
 
 const API_URL = resolveApiUrl();
-const DEFAULT_PASSWORD = 'Musica2026!';
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Gauge, adminOnly: false },
@@ -69,8 +68,9 @@ const emptyReserva = {
 const emptyPrestamo = {
   user_id: '',
   inventario_id: '',
-  evento_universidad: '',
+  motivo: '',
   documento_garantia: 'Cédula de Identidad',
+  fecha_salida: '',
   fecha_limite: '',
   terminos_aceptados: true,
 };
@@ -81,7 +81,7 @@ const emptySocio = {
   telefono_whatsapp: '',
   nivel_habilidad: 'PRINCIPIANTE',
   rol: 'SOCIO',
-  password: DEFAULT_PASSWORD,
+  password: '',
 };
 
 const emptyInstrumento = {
@@ -137,6 +137,33 @@ function Message({ message }) {
 function formatDate(value) {
   if (!value) return 'Sin fecha';
   return value.replace('T', ' ').slice(0, 16);
+}
+
+function CountdownTimer({ fechaLimite }) {
+  const [timeLeft, setTimeLeft] = useState('');
+  const [urgency, setUrgency] = useState('ok');
+
+  useEffect(() => {
+    function update() {
+      const diff = new Date(fechaLimite) - new Date();
+      if (diff <= 0) { setTimeLeft('VENCIDO'); setUrgency('expired'); return; }
+      const days = Math.floor(diff / 86400000);
+      const hours = Math.floor((diff % 86400000) / 3600000);
+      const mins = Math.floor((diff % 3600000) / 60000);
+      setUrgency(diff < 4 * 3600000 ? 'critical' : diff < 24 * 3600000 ? 'warning' : 'ok');
+      setTimeLeft(days > 0 ? `${days}d ${hours}h` : hours > 0 ? `${hours}h ${mins}m` : `${mins}m`);
+    }
+    update();
+    const id = setInterval(update, 60000);
+    return () => clearInterval(id);
+  }, [fechaLimite]);
+
+  const colors = { ok: '#22c55e', warning: '#f59e0b', critical: '#ef4444', expired: '#dc2626' };
+  return (
+    <span style={{ fontSize: '0.78rem', fontWeight: '700', color: colors[urgency] || '#888' }}>
+      ⏱ {timeLeft}
+    </span>
+  );
 }
 
 function exportToCSV(data, filename) {
@@ -226,7 +253,7 @@ export default function App() {
   const [activeView, setActiveView] = useState('dashboard');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
-  const [login, setLogin] = useState({ email: 'juan.sandoval@pucesa.edu.ec', password: DEFAULT_PASSWORD });
+  const [login, setLogin] = useState({ email: '', password: '' });
   const [showRecover, setShowRecover] = useState(false);
   const [recoverEmail, setRecoverEmail] = useState('');
 
@@ -237,6 +264,8 @@ export default function App() {
   const [reservas, setReservas] = useState([]);
   const [calendarEvents, setCalendarEvents] = useState([]);
   const [prestamos, setPrestamos] = useState([]);
+
+  const [editingUser, setEditingUser] = useState(null);
 
   const [reservaForm, setReservaForm] = useState(emptyReserva);
   const [prestamoForm, setPrestamoForm] = useState(emptyPrestamo);
@@ -457,6 +486,17 @@ export default function App() {
     }
   }
 
+  async function handleEditSave(userId, updatedData) {
+    try {
+      await api(`/users/${userId}`, { method: 'PUT', body: JSON.stringify(updatedData) });
+      setEditingUser(null);
+      setMessage({ text: 'Socio actualizado correctamente.', type: 'success' });
+      await loadData();
+    } catch (err) {
+      setMessage({ text: err.message, type: 'error' });
+    }
+  }
+
   if (!currentUser) {
     return (
       <main className="login-page">
@@ -499,7 +539,7 @@ export default function App() {
             </>
           )}
           <div className="hint" style={{ marginTop: '1.5rem' }}>
-            <strong>Semilla:</strong> juan.sandoval@pucesa.edu.ec / {DEFAULT_PASSWORD}
+            Ingresa con tu correo institucional @pucesa.edu.ec
           </div>
         </section>
       </main>
@@ -550,7 +590,7 @@ export default function App() {
         <Message message={message} />
 
         {activeView === 'dashboard' && (
-          <Dashboard isAdmin={isAdmin} stats={stats} reservas={reservas} prestamos={prestamos} inventario={inventario} />
+          <Dashboard isAdmin={isAdmin} stats={stats} reservas={reservas} prestamos={prestamos} inventario={inventario} currentUser={currentUser} />
         )}
         {activeView === 'calendario' && (
           <CalendarioView events={calendarEvents} currentUser={currentUser} setActiveView={setActiveView} setForm={setReservaForm} />
@@ -592,7 +632,7 @@ export default function App() {
           />
         )}
         {activeView === 'socios' && (
-          <SociosView api={api} form={socioForm} setForm={setSocioForm} onSubmit={submitSocio} />
+          <SociosView api={api} form={socioForm} setForm={setSocioForm} onSubmit={submitSocio} setEditingUser={setEditingUser} />
         )}
         {activeView === 'salas' && (
           <SalasView salas={salas} form={salaForm} setForm={setSalaForm} onSubmit={submitSala} />
@@ -603,7 +643,8 @@ export default function App() {
         {activeView === 'perfil' && (
           <PerfilView api={api} currentUser={currentUser} loadData={loadData} setCurrentUser={setCurrentUser} />
         )}
-      </section>
+      {editingUser && <EditSocioModal socio={editingUser} onClose={() => setEditingUser(null)} onSave={handleEditSave} />}
+</section>
     </div>
   );
 }
@@ -672,7 +713,11 @@ function PerfilView({ api, currentUser, loadData, setCurrentUser }) {
   );
 }
 
-function Dashboard({ isAdmin, stats, reservas, prestamos, inventario }) {
+function Dashboard({ isAdmin, stats, reservas, prestamos, inventario, currentUser }) {
+  const myLoans = currentUser
+    ? prestamos.filter((p) => p.user_id === currentUser.id && p.estado === 'ACTIVO')
+    : [];
+
   const cards = isAdmin ? [
     ['Socios activos', stats?.socios_activos ?? 0],
     ['Instrumentos', stats?.instrumentos ?? inventario.length],
@@ -694,20 +739,48 @@ function Dashboard({ isAdmin, stats, reservas, prestamos, inventario }) {
           </article>
         ))}
       </div>
+
+      {!isAdmin && myLoans.length > 0 && (
+        <section className="panel">
+          <div className="panel-title">
+            <PackageCheck size={18} />
+            <h2>Tus préstamos activos</h2>
+          </div>
+          <div className="table">
+            {myLoans.map((prestamo) => (
+              <div className="row" key={prestamo.id}>
+                <span style={{ fontWeight: '600' }}>{prestamo.instrumento_nombre}</span>
+                <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>Límite: {formatDate(prestamo.fecha_limite)}</span>
+                <CountdownTimer fechaLimite={prestamo.fecha_limite} />
+                <Badge value={prestamo.estado} />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <section className="panel">
         <div className="panel-title">
           <Activity size={18} />
           <h2>Próximas reservas</h2>
         </div>
         <div className="table">
-          {(stats?.proximas_reservas || reservas.slice(0, 5)).map((reserva) => (
-            <div className="row" key={reserva.id}>
-              <span>{reserva.sala_nombre}</span>
-              <span>{reserva.nombre_completo || 'Mi reserva'}</span>
-              <span>{formatDate(reserva.fecha_inicio)}</span>
-              <Badge value={reserva.estado || 'CONFIRMADA'} />
-            </div>
-          ))}
+          {(() => {
+            const upcoming = stats?.proximas_reservas?.length > 0
+              ? stats.proximas_reservas
+              : reservas.filter(r => new Date(r.fecha_inicio) > new Date() && r.estado === 'CONFIRMADA').slice(0, 5);
+            if (upcoming.length === 0) {
+              return <p style={{ padding: '1rem', color: 'var(--muted)', fontSize: '0.9rem' }}>No hay reservas próximas pendientes.</p>;
+            }
+            return upcoming.map((reserva) => (
+              <div className="row" key={reserva.id}>
+                <span>{reserva.sala_nombre}</span>
+                <span>{reserva.nombre_completo || 'Mi reserva'}</span>
+                <span>{formatDate(reserva.fecha_inicio)}</span>
+                <Badge value={reserva.estado || 'CONFIRMADA'} />
+              </div>
+            ));
+          })()}
         </div>
       </section>
     </div>
@@ -855,24 +928,25 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
-  
+  const [selectedPrestamo, setSelectedPrestamo] = useState(null);
+
   useEffect(() => {
     const timer = setTimeout(() => {
       api(`/prestamos?page=${page}&limit=5&search=${search}`).then(res => {
-        if(res.data) {
-          setData(res.data);
-          setTotal(res.total);
-        } else {
-          setData(res);
-          setTotal(res.length);
-        }
+        if (res.data) { setData(res.data); setTotal(res.total); }
+        else { setData(res); setTotal(res.length); }
       });
     }, 300);
     return () => clearTimeout(timer);
   }, [page, search, form]);
 
+  const today = new Date().toISOString().slice(0, 10);
+
   return (
     <div className="two-column">
+      {selectedPrestamo && (
+        <PrestamoDetailModal prestamo={selectedPrestamo} onClose={() => setSelectedPrestamo(null)} />
+      )}
       <section className="panel">
         <div className="panel-title"><PackageCheck size={18} /><h2>Registrar préstamo</h2></div>
         <form className="form" onSubmit={onSubmit}>
@@ -890,11 +964,31 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
               {instrumentos.map((item) => <option key={item.id} value={item.id}>{item.nombre} · {item.tipo}</option>)}
             </SelectInput>
           </Field>
-          <Field label="Evento universitario">
-            <TextInput value={form.evento_universidad} onChange={(e) => setForm({ ...form, evento_universidad: e.target.value })} required />
+          <Field label="Motivo del préstamo">
+            <TextInput
+              value={form.motivo}
+              onChange={(e) => setForm({ ...form, motivo: e.target.value })}
+              placeholder="Ej: Festival Cultural, Ensayo de banda..."
+              required
+            />
           </Field>
-          <Field label="Fecha límite">
-            <TextInput type="datetime-local" value={form.fecha_limite} onChange={(e) => setForm({ ...form, fecha_limite: e.target.value })} required />
+          <Field label="Fecha de salida">
+            <TextInput
+              type="date"
+              value={form.fecha_salida}
+              onChange={(e) => setForm({ ...form, fecha_salida: e.target.value })}
+              min={today}
+              required
+            />
+          </Field>
+          <Field label="Fecha límite de devolución">
+            <TextInput
+              type="date"
+              value={form.fecha_limite}
+              onChange={(e) => setForm({ ...form, fecha_limite: e.target.value })}
+              min={form.fecha_salida || today}
+              required
+            />
           </Field>
           <button className="button primary" type="submit">Registrar préstamo</button>
         </form>
@@ -908,14 +1002,30 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
         <div style={{ marginBottom: '1rem' }}>
           <TextInput placeholder="Buscar por socio o instrumento..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
         </div>
+        <p style={{ fontSize: '0.8rem', color: 'var(--muted)', marginBottom: '0.5rem' }}>
+          Haz clic en un préstamo para ver sus detalles completos.
+        </p>
         <div className="table">
           {data.map((prestamo) => (
-            <div className="row" key={prestamo.id}>
+            <div
+              className="row"
+              key={prestamo.id}
+              onClick={() => setSelectedPrestamo(prestamo)}
+              style={{ cursor: 'pointer' }}
+            >
               <span>{prestamo.instrumento_nombre}</span>
               <span>{prestamo.nombre_completo}</span>
               <span>{formatDate(prestamo.fecha_limite)}</span>
+              {prestamo.estado === 'ACTIVO' && <CountdownTimer fechaLimite={prestamo.fecha_limite} />}
               <Badge value={prestamo.estado} />
-              {prestamo.estado === 'ACTIVO' && <button className="link-button" onClick={() => { onReturn(prestamo.id); setPage(page); }}>Devolver</button>}
+              {isAdmin && prestamo.estado === 'ACTIVO' && (
+                <button
+                  className="link-button"
+                  onClick={(e) => { e.stopPropagation(); onReturn(prestamo.id); setPage(page); }}
+                >
+                  Devolver
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -961,9 +1071,12 @@ function InventarioView({ isAdmin, inventario, form, setForm, onSubmit }) {
               <h3>{item.nombre}</h3>
               <p>{item.tipo} · {item.marca || 'Sin marca'} {item.modelo || ''}</p>
             </div>
-            <Badge value={item.disponible ? 'DISPONIBLE' : 'PRESTADO'} />
-            <span>{item.ubicacion}</span>
             <Badge value={item.estado} />
+            <span style={{ fontSize: '0.82rem', color: 'var(--muted)' }}>{item.ubicacion}</span>
+            {item.disponible
+              ? <span style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 600 }}>✓ Disponible para préstamo</span>
+              : <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>No disponible para préstamo</span>
+            }
           </article>
         ))}
       </section>
@@ -971,7 +1084,7 @@ function InventarioView({ isAdmin, inventario, form, setForm, onSubmit }) {
   );
 }
 
-function SociosView({ api, form, setForm, onSubmit }) {
+function SociosView({ api, form, setForm, onSubmit, setEditingUser }) {
   const [data, setData] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -1028,7 +1141,7 @@ function SociosView({ api, form, setForm, onSubmit }) {
         </div>
         <div className="table">
           {data.map((user) => (
-            <div className="row" key={user.id}>
+            <div className="row" key={user.id} style={{ cursor: "pointer" }} onClick={() => setEditingUser(user)} title="Clic para editar">
               <span>{user.nombre_completo}</span>
               <span>{user.email_institucional}</span>
               <span>{user.nivel_habilidad}</span>
@@ -1081,6 +1194,137 @@ function SalasView({ salas, form, setForm, onSubmit }) {
           </article>
         ))}
       </section>
+    </div>
+  );
+}
+
+function PrestamoDetailModal({ prestamo, onClose }) {
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: 'var(--bg-panel, #fff)', borderRadius: '14px', padding: '2rem', minWidth: '420px', maxWidth: '560px', width: '90%', boxShadow: '0 12px 40px rgba(0,0,0,0.25)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
+          <div>
+            <h2 style={{ margin: 0 }}>Detalle del Préstamo</h2>
+            <p style={{ fontSize: '0.82rem', color: '#888', margin: '4px 0 0' }}>ID #{prestamo.id}</p>
+          </div>
+          <Badge value={prestamo.estado} />
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem 1.5rem', marginBottom: '1.5rem' }}>
+          <div>
+            <p style={{ fontSize: '0.72rem', color: '#888', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Instrumento</p>
+            <p style={{ fontWeight: '600', margin: '3px 0 0' }}>{prestamo.instrumento_nombre}</p>
+            <p style={{ fontSize: '0.8rem', color: '#666', margin: 0 }}>{prestamo.tipo}</p>
+          </div>
+          <div>
+            <p style={{ fontSize: '0.72rem', color: '#888', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Socio</p>
+            <p style={{ fontWeight: '600', margin: '3px 0 0' }}>{prestamo.nombre_completo}</p>
+          </div>
+          <div>
+            <p style={{ fontSize: '0.72rem', color: '#888', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Fecha de salida</p>
+            <p style={{ fontWeight: '600', margin: '3px 0 0' }}>{formatDate(prestamo.fecha_salida)}</p>
+          </div>
+          <div>
+            <p style={{ fontSize: '0.72rem', color: '#888', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Fecha límite</p>
+            <p style={{ fontWeight: '600', margin: '3px 0 0' }}>{formatDate(prestamo.fecha_limite)}</p>
+          </div>
+          {prestamo.fecha_devolucion && (
+            <div>
+              <p style={{ fontSize: '0.72rem', color: '#888', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Devuelto el</p>
+              <p style={{ fontWeight: '600', margin: '3px 0 0' }}>{formatDate(prestamo.fecha_devolucion)}</p>
+            </div>
+          )}
+          {prestamo.estado === 'ACTIVO' && (
+            <div>
+              <p style={{ fontSize: '0.72rem', color: '#888', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tiempo restante</p>
+              <div style={{ marginTop: '4px' }}><CountdownTimer fechaLimite={prestamo.fecha_limite} /></div>
+            </div>
+          )}
+          {prestamo.motivo && (
+            <div style={{ gridColumn: '1/-1' }}>
+              <p style={{ fontSize: '0.72rem', color: '#888', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Motivo</p>
+              <p style={{ margin: '3px 0 0' }}>{prestamo.motivo}</p>
+            </div>
+          )}
+          {prestamo.observaciones && (
+            <div style={{ gridColumn: '1/-1' }}>
+              <p style={{ fontSize: '0.72rem', color: '#888', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Observaciones</p>
+              <p style={{ fontSize: '0.9rem', margin: '3px 0 0' }}>{prestamo.observaciones}</p>
+            </div>
+          )}
+        </div>
+
+        <button className="button ghost" style={{ width: '100%' }} onClick={onClose}>Cerrar</button>
+      </div>
+    </div>
+  );
+}
+
+function EditSocioModal({ socio, onClose, onSave }) {
+  const [form, setForm] = useState({
+    nombre_completo: socio.nombre_completo || '',
+    telefono_whatsapp: socio.telefono_whatsapp || '',
+    nivel_habilidad: socio.nivel_habilidad || 'PRINCIPIANTE',
+    rol: socio.rol || 'SOCIO',
+    estado: socio.estado || 'ACTIVO',
+  });
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    onSave(socio.id, form);
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000
+    }}>
+      <div style={{
+        background: 'var(--bg-panel, #fff)', borderRadius: '12px',
+        padding: '2rem', minWidth: '360px', boxShadow: '0 8px 32px rgba(0,0,0,0.2)'
+      }}>
+        <h2 style={{ marginBottom: '1.5rem' }}>Editar Socio</h2>
+        <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '1rem' }}>{socio.email_institucional}</p>
+        <form className="form" onSubmit={handleSubmit}>
+          <Field label="Nombre completo">
+            <TextInput value={form.nombre_completo} onChange={e => setForm({ ...form, nombre_completo: e.target.value })} required />
+          </Field>
+          <Field label="Teléfono WhatsApp">
+            <TextInput value={form.telefono_whatsapp} onChange={e => setForm({ ...form, telefono_whatsapp: e.target.value })} />
+          </Field>
+          <Field label="Nivel de habilidad">
+            <SelectInput value={form.nivel_habilidad} onChange={e => setForm({ ...form, nivel_habilidad: e.target.value })}>
+              <option value="PRINCIPIANTE">PRINCIPIANTE</option>
+              <option value="INTERMEDIO">INTERMEDIO</option>
+              <option value="AVANZADO">AVANZADO</option>
+              <option value="PROFESIONAL">PROFESIONAL</option>
+            </SelectInput>
+          </Field>
+          <Field label="Rol">
+            <SelectInput value={form.rol} onChange={e => setForm({ ...form, rol: e.target.value })}>
+              <option value="SOCIO">SOCIO</option>
+              <option value="ADMIN">ADMIN</option>
+            </SelectInput>
+          </Field>
+          <Field label="Estado">
+            <SelectInput value={form.estado} onChange={e => setForm({ ...form, estado: e.target.value })}>
+              <option value="ACTIVO">ACTIVO</option>
+              <option value="INACTIVO">INACTIVO</option>
+              <option value="BLOQUEADO">BLOQUEADO</option>
+            </SelectInput>
+          </Field>
+          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+            <button className="button primary" type="submit" style={{ flex: 1 }}>Guardar</button>
+            <button className="button ghost" type="button" onClick={onClose} style={{ flex: 1 }}>Cancelar</button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

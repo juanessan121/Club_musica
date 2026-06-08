@@ -6,11 +6,17 @@ from datetime import date, datetime, timedelta
 from functools import wraps
 import string
 import random
+import smtplib
+import csv
+import io
+import threading
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
 import pymysql
 import requests
 import jwt
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 
 try:
@@ -20,7 +26,11 @@ except ImportError:
 
 
 app = Flask(__name__)
-CORS(app)
+ALLOWED_ORIGINS = os.environ.get(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost:3001,http://localhost:8088,http://127.0.0.1:3001"
+).split(",")
+CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
 
 DB_HOST = os.environ.get("DB_HOST", "db-mariadb")
 DB_USER = os.environ.get("DB_USER", "clubmusica")
@@ -31,6 +41,11 @@ DEFAULT_PASSWORD = os.environ.get("DEFAULT_USER_PASSWORD", "Musica2026!")
 JWT_SECRET = os.environ.get("JWT_SECRET", "super-secret-key-2026")
 JWT_ALGORITHM = "HS256"
 SCHEMA_READY = False
+SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
+SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
+SMTP_USER = os.environ.get('SMTP_USER', 'proyectoserror404@gmail.com')
+SMTP_PASS = os.environ.get('SMTP_PASS', '')
+SMTP_FROM = os.environ.get('SMTP_FROM', 'proyectoserror404@gmail.com')
 
 def get_user_from_token():
     auth_header = request.headers.get("Authorization")
@@ -116,7 +131,7 @@ def serialize_rows(rows):
 def parse_datetime(value, field_name):
     if isinstance(value, datetime):
         return value
-    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
         try:
             return datetime.strptime(str(value), fmt)
         except ValueError:
@@ -171,7 +186,11 @@ def table_exists(cursor, table_name):
     return cursor.fetchone() is not None
 
 
+_ALLOWED_TABLES = {"SOCIO", "RESERVA", "PRESTAMO", "INSTRUMENTO", "SALA", "MULTA", "EVENTO"}
+
 def column_names(cursor, table_name):
+    if table_name not in _ALLOWED_TABLES:
+        raise ValueError(f"Tabla no permitida: {table_name}")
     cursor.execute(f"SHOW COLUMNS FROM {table_name}")
     return {row["Field"] for row in cursor.fetchall()}
 
@@ -209,6 +228,45 @@ def ensure_database_schema():
                 cursor.execute("ALTER TABLE SOCIO ADD COLUMN rol VARCHAR(20) NOT NULL DEFAULT 'SOCIO' AFTER nivel_habilidad")
             cursor.execute("UPDATE SOCIO SET rol = 'ADMIN' WHERE email = 'juan.sandoval@pucesa.edu.ec'")
             cursor.execute("UPDATE SOCIO SET rol = 'SOCIO' WHERE rol IS NULL OR rol = ''")
+
+            # Add notificado_1h column to RESERVA if missing
+            reserva_cols = column_names(cursor, 'RESERVA')
+            if 'notificado_1h' not in reserva_cols:
+                cursor.execute('ALTER TABLE RESERVA ADD COLUMN notificado_1h TINYINT(1) DEFAULT 0')
+            # Add avatar_url to SOCIO if missing
+            socio_cols2 = column_names(cursor, 'SOCIO')
+            if 'avatar_url' not in socio_cols2:
+                cursor.execute('ALTER TABLE SOCIO ADD COLUMN avatar_url TEXT NULL')
+
+            # MULTA table
+            if not table_exists(cursor, 'MULTA'):
+                cursor.execute("""
+                    CREATE TABLE MULTA (
+                        id INT PRIMARY KEY AUTO_INCREMENT,
+                        socio_id INT NOT NULL,
+                        prestamo_id INT NULL,
+                        reserva_id INT NULL,
+                        monto DECIMAL(8,2) NOT NULL DEFAULT 0.00,
+                        motivo VARCHAR(255) NOT NULL,
+                        estado VARCHAR(20) NOT NULL DEFAULT 'PENDIENTE',
+                        fecha_creacion DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        fecha_pago DATETIME NULL,
+                        FOREIGN KEY (socio_id) REFERENCES SOCIO(id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                """)
+
+            # PRESTAMO table changes
+            prestamo_cols = column_names(cursor, 'PRESTAMO')
+            if 'motivo' not in prestamo_cols:
+                cursor.execute('ALTER TABLE PRESTAMO ADD COLUMN motivo VARCHAR(255) NULL AFTER instrumento_id')
+            
+            try:
+                cursor.execute('ALTER TABLE PRESTAMO MODIFY COLUMN fecha_salida DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP')
+                cursor.execute('ALTER TABLE PRESTAMO MODIFY COLUMN fecha_limite DATETIME NOT NULL')
+                cursor.execute('ALTER TABLE PRESTAMO MODIFY COLUMN fecha_devolucion DATETIME NULL')
+            except Exception as e:
+                print("Nota: No se pudo alterar PRESTAMO a DATETIME:", e)
+
             conn.commit()
             SCHEMA_READY = True
     except Exception:
@@ -319,6 +377,157 @@ def notify_whatsapp(number, message):
         return False
 
 
+def send_email_async(to_email, subject, html_body):
+    """Send email in background thread to avoid blocking the API."""
+    def _send():
+        if not SMTP_USER or not SMTP_PASS:
+            print(f"[EMAIL SIMULADO] Para: {to_email} | Asunto: {subject}")
+            return
+        try:
+            msg = MIMEMultipart('alternative')
+            msg['Subject'] = subject
+            msg['From'] = f'Club de M\u00fasica PUCESA <{SMTP_FROM}>'
+            msg['To'] = to_email
+            msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                server.ehlo()
+                server.starttls()
+                server.login(SMTP_USER, SMTP_PASS)
+                server.sendmail(SMTP_FROM, [to_email], msg.as_string())
+            print(f"[EMAIL OK] Para: {to_email} | Asunto: {subject}")
+        except Exception as e:
+            print(f"[EMAIL ERROR] {e}")
+    threading.Thread(target=_send, daemon=True).start()
+
+
+def build_email_reserva_confirmada(nombre, sala_nombre, fecha_inicio, fecha_fin, reserva_id):
+    """HTML template for reservation confirmation email."""
+    return f"""
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Reserva Confirmada</title>
+</head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:40px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10);">
+        <!-- Header -->
+        <tr>
+          <td style="background:linear-gradient(135deg,#116a7b 0%,#0b4d59 100%);padding:40px 48px 32px;">
+            <table width="100%">
+              <tr>
+                <td>
+                  <p style="margin:0;color:rgba(255,255,255,0.7);font-size:13px;letter-spacing:2px;text-transform:uppercase;">Club de M&uacute;sica</p>
+                  <h1 style="margin:8px 0 0;color:#ffffff;font-size:28px;font-weight:800;letter-spacing:-0.5px;">&#9989; Reserva Confirmada</h1>
+                </td>
+                <td align="right">
+                  <div style="background:rgba(255,255,255,0.15);border-radius:12px;padding:12px 18px;display:inline-block;">
+                    <p style="margin:0;color:white;font-size:11px;opacity:0.8;">ID DE RESERVA</p>
+                    <p style="margin:4px 0 0;color:white;font-size:22px;font-weight:800;">#{reserva_id}</p>
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <!-- Greeting -->
+        <tr>
+          <td style="padding:36px 48px 0;">
+            <p style="margin:0;font-size:18px;color:#172033;">Hola, <strong>{nombre}</strong> &#128075;</p>
+            <p style="margin:12px 0 0;font-size:15px;color:#647084;line-height:1.6;">Tu reserva de sala ha sido <strong style="color:#116a7b;">confirmada exitosamente</strong>. Aqu&iacute; est&aacute;n los detalles:</p>
+          </td>
+        </tr>
+        <!-- Details card -->
+        <tr>
+          <td style="padding:24px 48px;">
+            <div style="background:#f8fafc;border-radius:12px;padding:24px;border:1.5px solid #dbe1ea;">
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="padding:10px 0;border-bottom:1px solid #edf2f7;">
+                    <span style="font-size:13px;color:#647084;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">&#127968; Sala</span>
+                    <p style="margin:4px 0 0;font-size:17px;font-weight:700;color:#172033;">{sala_nombre}</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 0;border-bottom:1px solid #edf2f7;">
+                    <span style="font-size:13px;color:#647084;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">&#128197; Inicio</span>
+                    <p style="margin:4px 0 0;font-size:17px;font-weight:700;color:#172033;">{fecha_inicio}</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:10px 0;">
+                    <span style="font-size:13px;color:#647084;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;">&#128276; Fin</span>
+                    <p style="margin:4px 0 0;font-size:17px;font-weight:700;color:#172033;">{fecha_fin}</p>
+                  </td>
+                </tr>
+              </table>
+            </div>
+          </td>
+        </tr>
+        <!-- Rules reminder -->
+        <tr>
+          <td style="padding:0 48px 24px;">
+            <div style="background:#fff7ed;border-radius:12px;padding:20px 24px;border-left:4px solid #f59e0b;">
+              <p style="margin:0 0 8px;font-size:13px;font-weight:700;color:#92400e;">&#128203; RECUERDA LAS REGLAS</p>
+              <ul style="margin:0;padding:0 0 0 16px;font-size:13px;color:#78350f;line-height:1.8;">
+                <li>Llega puntual &mdash; la sala se libera autom&aacute;ticamente al terminar tu turno.</li>
+                <li>Deja la sala en las mismas condiciones que la encontraste.</li>
+                <li>En caso de no asistir, cancela con al menos 30 minutos de anticipaci&oacute;n.</li>
+              </ul>
+            </div>
+          </td>
+        </tr>
+        <!-- Footer -->
+        <tr>
+          <td style="background:#f8fafc;padding:24px 48px;border-top:1.5px solid #dbe1ea;">
+            <p style="margin:0;font-size:13px;color:#647084;text-align:center;">Club de M&uacute;sica &middot; PUCESA &middot; Este correo fue generado autom&aacute;ticamente.</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
+    """
+
+
+def build_email_reserva_cancelada(nombre, sala_nombre, fecha_inicio, reserva_id):
+    """HTML template for reservation cancellation email."""
+    return f"""
+<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><title>Reserva Cancelada</title></head>
+<body style="margin:0;padding:0;background:#f0f4f8;font-family:'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f0f4f8;padding:40px 0;">
+    <tr><td align="center">
+      <table width="600" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.10);">
+        <tr>
+          <td style="background:linear-gradient(135deg,#b42318 0%,#7f1d1d 100%);padding:40px 48px 32px;">
+            <p style="margin:0;color:rgba(255,255,255,0.7);font-size:13px;letter-spacing:2px;text-transform:uppercase;">Club de M&uacute;sica</p>
+            <h1 style="margin:8px 0 0;color:#ffffff;font-size:28px;font-weight:800;">&#10060; Reserva Cancelada</h1>
+          </td>
+        </tr>
+        <tr><td style="padding:36px 48px 24px;">
+          <p style="margin:0;font-size:16px;color:#172033;">Hola <strong>{nombre}</strong>, tu reserva <strong>#{reserva_id}</strong> de la sala <strong style="color:#b42318;">{sala_nombre}</strong> programada para el <strong>{fecha_inicio}</strong> ha sido cancelada.</p>
+          <p style="margin:16px 0 0;font-size:14px;color:#647084;">Si crees que esto es un error o deseas hacer una nueva reserva, ingresa al sistema.</p>
+          <div style="margin:24px 0 0;background:#fff5f5;border-radius:10px;padding:16px 20px;border-left:4px solid #b42318;">
+            <p style="margin:0;font-size:13px;color:#7f1d1d;">&#128161; Recuerda que puedes hacer una nueva reserva en cualquier momento desde el sistema.</p>
+          </div>
+        </td></tr>
+        <tr><td style="background:#f8fafc;padding:20px 48px;border-top:1.5px solid #dbe1ea;">
+          <p style="margin:0;font-size:13px;color:#647084;text-align:center;">Club de M&uacute;sica &middot; PUCESA</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>
+    """
+
+
 def reservation_overlap(cursor, sala_id, fecha_inicio, fecha_fin, exclude_id=None):
     params = [sala_id, fecha_fin, fecha_inicio]
     sql = """
@@ -373,9 +582,9 @@ def login():
             if not valid:
                 return error("Credenciales inválidas", 401)
 
-            is_admin = socio.get("rol") == "ADMIN" or socio["email"] == "juan.sandoval@pucesa.edu.ec"
+            is_admin = socio.get("rol") == "ADMIN"
             conn.commit()
-            
+
             token_payload = {
                 "id": socio["id"],
                 "email": socio["email"],
@@ -519,6 +728,36 @@ def create_user():
         conn.close()
 
 
+@app.route('/api/socios/<int:socio_id>/historial', methods=['GET'])
+@require_auth
+def socio_historial(socio_id):
+    # Only admin or the socio themselves can see their historial
+    if request.user.get('rol') != 'ADMIN' and request.user.get('id') != socio_id:
+        return error('No autorizado', 403)
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT 'reserva' AS tipo, r.id, r.fecha_inicio AS fecha, r.estado,
+                       sa.nombre AS detalle
+                FROM RESERVA r
+                JOIN SALA sa ON sa.id = r.sala_id
+                WHERE r.socio_id = %s
+                UNION ALL
+                SELECT 'prestamo' AS tipo, p.id, p.fecha_salida AS fecha, p.estado,
+                       i.nombre AS detalle
+                FROM PRESTAMO p
+                JOIN INSTRUMENTO i ON i.id = p.instrumento_id
+                WHERE p.socio_id = %s
+                ORDER BY fecha DESC
+                LIMIT 50
+            """, (socio_id, socio_id))
+            items = serialize_rows(cursor.fetchall())
+            return ok(items)
+    finally:
+        conn.close()
+
+
 @app.route("/api/users/<int:user_id>", methods=["GET", "PUT", "DELETE"])
 @require_auth
 def user_detail(user_id):
@@ -550,6 +789,27 @@ def user_detail(user_id):
             cursor.execute(f"UPDATE SOCIO SET {sql} WHERE id = %s", [value for _, value in updates] + [user_id])
             conn.commit()
             return ok({"message": "Socio actualizado"})
+    except Exception as exc:
+        conn.rollback()
+        return error(str(exc), 400)
+    finally:
+        conn.close()
+
+
+@app.route('/api/users/me/avatar', methods=['PUT'])
+@require_auth
+def update_avatar():
+    data = parse_json()
+    avatar_url = data.get('avatar_url', '').strip()
+    if not avatar_url:
+        return error('avatar_url requerido')
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute('UPDATE SOCIO SET avatar_url = %s WHERE id = %s',
+                           (avatar_url, request.user['id']))
+            conn.commit()
+            return ok({'message': 'Avatar actualizado'})
     except Exception as exc:
         conn.rollback()
         return error(str(exc), 400)
@@ -741,6 +1001,8 @@ def inventory_detail(item_id):
                 item = cursor.fetchone()
                 return ok(serialize_row(item)) if item else error("Instrumento no encontrado", 404)
 
+            if request.user.get("rol") != "ADMIN":
+                return error("No tienes permisos para modificar instrumentos", 403)
             data = parse_json()
             updates = []
             if "tipo" in data:
@@ -896,17 +1158,20 @@ def reservations_collection():
 
 
 def check_reservation_rules(fecha_inicio, fecha_fin):
-    ahora_local = datetime.now()
+    ahora_local = datetime.utcnow() - timedelta(hours=5)
     if fecha_inicio < ahora_local:
         return "La fecha de inicio no puede estar en el pasado"
+    minutos_anticipacion = (fecha_inicio - ahora_local).total_seconds() / 60
+    if minutos_anticipacion < 30:
+        return 'Debes reservar con al menos 30 minutos de anticipación'
     if fecha_fin <= fecha_inicio:
         return "La fecha de fin debe ser posterior al inicio"
     if fecha_inicio.date() != fecha_fin.date():
         return "La reserva debe iniciar y terminar el mismo día"
-    
+
     if fecha_inicio.hour < 8 or fecha_fin.hour > 22 or (fecha_fin.hour == 22 and fecha_fin.minute > 0):
         return "Las reservas solo están permitidas entre las 08:00 y las 22:00"
-    
+
     duracion = (fecha_fin - fecha_inicio).total_seconds() / 3600
     if duracion < 1:
         return "La reserva debe durar al menos 1 hora"
@@ -959,7 +1224,7 @@ def create_reservation():
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT estado FROM SALA WHERE id = %s", (data["sala_id"],))
+            cursor.execute('SELECT nombre, estado FROM SALA WHERE id = %s', (data['sala_id'],))
             sala = cursor.fetchone()
             if not sala:
                 return error("Sala no encontrada", 404)
@@ -987,18 +1252,26 @@ def create_reservation():
                 ),
             )
             reserva_id = cursor.lastrowid
-            cursor.execute("SELECT nombre, telefono FROM SOCIO WHERE id = %s", (data["user_id"],))
+            cursor.execute('SELECT nombre, telefono, email FROM SOCIO WHERE id = %s', (data['user_id'],))
             socio = cursor.fetchone()
             conn.commit()
 
             notified = False
             if socio:
-                primer_nombre = socio["nombre"].split(" ")[0]
+                primer_nombre = socio['nombre'].split(' ')[0]
                 notified = notify_whatsapp(
-                    socio["telefono"],
-                    f"Hola {primer_nombre}. Tu reserva de sala fue confirmada. Inicio: {fecha_inicio} Fin: {fecha_fin}.",
+                    socio['telefono'],
+                    f"\U0001f3b5 Hola {primer_nombre}! Tu reserva de *{sala['nombre']}* fue confirmada.\n\U0001f4c5 Inicio: {fecha_inicio.strftime('%d/%m/%Y %H:%M')}\n\U0001f514 Fin: {fecha_fin.strftime('%d/%m/%Y %H:%M')}\nID: #{reserva_id}",
                 )
-            return ok({"message": "Reserva creada exitosamente", "id": reserva_id, "whatsapp_enviado": notified}, 201)
+                if socio.get('email'):
+                    html = build_email_reserva_confirmada(
+                        socio['nombre'], sala['nombre'],
+                        fecha_inicio.strftime('%A %d de %B %Y, %H:%M'),
+                        fecha_fin.strftime('%H:%M'),
+                        reserva_id
+                    )
+                    send_email_async(socio['email'], '\u2705 Reserva Confirmada \u2014 Club de M\u00fasica', html)
+            return ok({'message': 'Reserva creada exitosamente', 'id': reserva_id, 'whatsapp_enviado': notified}, 201)
     except Exception as exc:
         conn.rollback()
         print("Create Reservation Error:", exc)
@@ -1073,26 +1346,48 @@ def reservation_calendar():
         conn.close()
 
 
-@app.route("/api/reservas/<int:reserva_id>", methods=["DELETE"])
+@app.route('/api/reservas/<int:reserva_id>', methods=['DELETE'])
 @require_auth
 def cancel_reservation(reserva_id):
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                """
+            # Get reservation + socio details before canceling
+            cursor.execute("""
+                SELECT r.id, r.fecha_inicio, r.fecha_fin, r.sala_id,
+                       s.nombre, s.telefono, s.email, sa.nombre AS sala_nombre
+                FROM RESERVA r
+                JOIN SOCIO s ON s.id = r.socio_id
+                JOIN SALA sa ON sa.id = r.sala_id
+                WHERE r.id = %s AND r.eliminado_en IS NULL
+            """, (reserva_id,))
+            reserva = cursor.fetchone()
+
+            cursor.execute("""
                 UPDATE RESERVA
                 SET estado = 'CANCELADA', eliminado_en = NOW(), modificado_por = 'API'
                 WHERE id = %s AND eliminado_en IS NULL
-                """,
-                (reserva_id,),
-            )
+            """, (reserva_id,))
             conn.commit()
-            return ok({"message": "Reserva cancelada"})
+
+            if reserva:
+                primer_nombre = reserva['nombre'].split(' ')[0]
+                fecha_str = reserva['fecha_inicio'].strftime('%d/%m/%Y %H:%M') if isinstance(reserva['fecha_inicio'], datetime) else str(reserva['fecha_inicio'])
+                notify_whatsapp(
+                    reserva['telefono'],
+                    f"\u274c Hola {primer_nombre}, tu reserva de *{reserva['sala_nombre']}* del {fecha_str} ha sido CANCELADA. Puedes hacer una nueva reserva en el sistema."
+                )
+                if reserva.get('email'):
+                    html = build_email_reserva_cancelada(
+                        reserva['nombre'], reserva['sala_nombre'], fecha_str, reserva_id
+                    )
+                    send_email_async(reserva['email'], '\u274c Reserva Cancelada \u2014 Club de M\u00fasica', html)
+
+            return ok({'message': 'Reserva cancelada'})
     except Exception as exc:
         conn.rollback()
-        print("Cancel Reservation Error:", exc)
-        return error("Error al cancelar la reserva", 400)
+        print('Cancel Reservation Error:', exc)
+        return error('Error al cancelar la reserva', 400)
     finally:
         conn.close()
 
@@ -1110,7 +1405,7 @@ def loans_collection():
             sql = """
                 SELECT p.id, p.socio_id AS user_id, p.instrumento_id AS inventario_id,
                        p.fecha_salida, p.fecha_limite, p.fecha_devolucion, p.estado,
-                       p.observaciones, s.nombre AS nombre_completo,
+                       p.motivo, p.observaciones, s.nombre AS nombre_completo,
                        i.nombre AS instrumento_nombre, ti.nombre AS tipo
                 FROM PRESTAMO p
                 JOIN SOCIO s ON s.id = p.socio_id
@@ -1166,7 +1461,7 @@ def loans_by_status(status):
                 """
                 SELECT p.id, p.socio_id AS user_id, p.instrumento_id AS inventario_id,
                        p.fecha_salida, p.fecha_limite, p.fecha_devolucion, p.estado,
-                       p.observaciones, s.nombre AS nombre_completo,
+                       p.motivo, p.observaciones, s.nombre AS nombre_completo,
                        i.nombre AS instrumento_nombre, ti.nombre AS tipo
                 FROM PRESTAMO p
                 JOIN SOCIO s ON s.id = p.socio_id
@@ -1186,21 +1481,25 @@ def loans_by_status(status):
 @require_auth
 def request_loan():
     data = parse_json()
-    required = require_fields(data, ["user_id", "inventario_id", "fecha_limite"])
+    required = require_fields(data, ["user_id", "inventario_id", "fecha_salida", "fecha_limite", "motivo"])
     if required:
         return error(required)
 
     try:
-        fecha_limite = parse_date(data["fecha_limite"], "fecha_limite")
+        fecha_salida = parse_datetime(data["fecha_salida"], "fecha_salida")
+        fecha_limite = parse_datetime(data["fecha_limite"], "fecha_limite")
     except ValueError as exc:
         return error(str(exc))
+        
+    if fecha_limite <= fecha_salida:
+        return error("La fecha y hora límite debe ser posterior a la de salida", 400)
 
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, estado
+                SELECT id, estado, nombre AS instrumento_nombre
                 FROM INSTRUMENTO
                 WHERE id = %s
                 FOR UPDATE
@@ -1223,6 +1522,12 @@ def request_loan():
             if cursor.fetchone():
                 return error("El instrumento ya está prestado", 409)
 
+            cursor.execute(
+                "SELECT nombre, telefono FROM SOCIO WHERE id = %s",
+                (data["user_id"],),
+            )
+            socio_info = cursor.fetchone()
+
             observaciones = data.get("observaciones") or data.get("evento_universidad") or ""
             documento = data.get("documento_garantia")
             if documento:
@@ -1230,14 +1535,16 @@ def request_loan():
             cursor.execute(
                 """
                 INSERT INTO PRESTAMO (
-                    socio_id, instrumento_id, fecha_limite, estado,
+                    socio_id, instrumento_id, fecha_salida, fecha_limite, motivo, estado,
                     observaciones, creado_por, modificado_por
-                ) VALUES (%s, %s, %s, 'ACTIVO', %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, 'ACTIVO', %s, %s, %s)
                 """,
                 (
                     data["user_id"],
                     data["inventario_id"],
+                    fecha_salida,
                     fecha_limite,
+                    data["motivo"],
                     observaciones,
                     data.get("creado_por", "API"),
                     data.get("modificado_por", "API"),
@@ -1249,6 +1556,19 @@ def request_loan():
                 (data["inventario_id"],),
             )
             conn.commit()
+
+            # Notify socio via WhatsApp (non-fatal)
+            try:
+                if socio_info and socio_info.get("telefono"):
+                    primer_nombre = socio_info["nombre"].split(" ")[0]
+                    fecha_str = fecha_limite.strftime("%d/%m/%Y")
+                    notify_whatsapp(
+                        socio_info["telefono"],
+                        f"✅ Hola {primer_nombre}, se registró tu préstamo de *{instrument['instrumento_nombre']}* hasta el {fecha_str}. ¡Cuídalo bien y devúelvelo a tiempo!",
+                    )
+            except Exception:
+                pass
+
             return ok({"message": "Préstamo registrado", "id": loan_id}, 201)
     except Exception as exc:
         conn.rollback()
@@ -1279,7 +1599,7 @@ def return_loan(prestamo_id):
             cursor.execute(
                 """
                 UPDATE PRESTAMO
-                SET estado = 'DEVUELTO', fecha_devolucion = CURRENT_DATE, modificado_por = 'API'
+                SET estado = 'DEVUELTO', fecha_devolucion = CURRENT_TIMESTAMP, modificado_por = 'API'
                 WHERE id = %s
                 """,
                 (prestamo_id,),
@@ -1386,6 +1706,7 @@ def audit_instruments():
 
 
 @app.route("/api/trigger_notifications", methods=["POST"])
+@require_admin
 def trigger_notifications():
     conn = get_db_connection()
     try:
@@ -1432,10 +1753,14 @@ def check_overdue_loans():
                 cursor.execute("UPDATE PRESTAMO SET estado = 'VENCIDO' WHERE id = %s", (p["id"],))
                 primer_nombre = p["nombre"].split(" ")[0]
                 notify_whatsapp(
-                    p["telefono"], 
-                    f"⚠️ ALERTA: Hola {primer_nombre}, el préstamo de tu instrumento '{p['instrumento_nombre']}' ha VENCIDO. Por favor devuélvelo inmediatamente para evitar sanciones."
+                    p["telefono"],
+                    f"\u26a0\ufe0f ALERTA: Hola {primer_nombre}, el pr\u00e9stamo de tu instrumento '{p['instrumento_nombre']}' ha VENCIDO. Por favor descu\u00e9lvelo inmediatamente para evitar sanciones."
                 )
-            
+                cursor.execute("""
+                    INSERT IGNORE INTO MULTA (socio_id, prestamo_id, monto, motivo)
+                    VALUES (%s, %s, 10.00, 'Préstamo vencido sin devolución')
+                """, (p['socio_id'], p['id']))
+
             if vencidos:
                 conn.commit()
                 print(f"Se actualizaron {len(vencidos)} préstamos a estado VENCIDO.")
@@ -1445,14 +1770,288 @@ def check_overdue_loans():
     finally:
         conn.close()
 
+_notified_loan_ids: set = set()
+
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
     scheduler = BackgroundScheduler()
-    # Ejecuta cada 1 minuto para que podamos probarlo rápidamente
-    scheduler.add_job(func=check_overdue_loans, trigger="interval", minutes=1)
+    scheduler.add_job(func=check_overdue_loans, trigger="interval", minutes=5)
+
+    def check_upcoming_reservations():
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT r.id, r.fecha_inicio, s.nombre, s.telefono,
+                           sa.nombre AS sala_nombre
+                    FROM RESERVA r
+                    JOIN SOCIO s ON s.id = r.socio_id
+                    JOIN SALA sa ON sa.id = r.sala_id
+                    WHERE r.estado = 'CONFIRMADA'
+                      AND r.eliminado_en IS NULL
+                      AND r.fecha_inicio BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 65 MINUTE)
+                      AND (r.notificado_1h IS NULL OR r.notificado_1h = 0)
+                """)
+                proximas = cursor.fetchall()
+                for res in proximas:
+                    primer_nombre = res['nombre'].split(' ')[0]
+                    notify_whatsapp(
+                        res['telefono'],
+                        f"\u23f0 Recordatorio: Hola {primer_nombre}, tu reserva de *{res['sala_nombre']}* empieza en 1 hora ({res['fecha_inicio'].strftime('%H:%M') if isinstance(res['fecha_inicio'], datetime) else res['fecha_inicio']}). \u00a1No olvides llegar puntual!"
+                    )
+                    cursor.execute('UPDATE RESERVA SET notificado_1h = 1 WHERE id = %s', (res['id'],))
+                if proximas:
+                    conn.commit()
+        except Exception as exc:
+            print('Error en reminder cron:', exc)
+        finally:
+            conn.close()
+
+    def check_upcoming_loans():
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("""
+                    SELECT p.id, p.fecha_limite, s.nombre, s.telefono,
+                           i.nombre AS instrumento_nombre
+                    FROM PRESTAMO p
+                    JOIN SOCIO s ON p.socio_id = s.id
+                    JOIN INSTRUMENTO i ON p.instrumento_id = i.id
+                    WHERE p.estado = 'ACTIVO'
+                      AND p.eliminado_en IS NULL
+                      AND p.fecha_limite BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 25 HOUR)
+                """)
+                proximos = cursor.fetchall()
+                for p in proximos:
+                    if p['id'] not in _notified_loan_ids:
+                        primer_nombre = p['nombre'].split(' ')[0]
+                        fecha_str = p['fecha_limite'].strftime('%d/%m/%Y') if hasattr(p['fecha_limite'], 'strftime') else str(p['fecha_limite'])
+                        notify_whatsapp(
+                            p['telefono'],
+                            f"⏳ Hola {primer_nombre}, tu préstamo de *{p['instrumento_nombre']}* vence el {fecha_str}. Por favor devúelvelo a tiempo para evitar una multa."
+                        )
+                        _notified_loan_ids.add(p['id'])
+        except Exception as exc:
+            print('Error en reminder préstamos:', exc)
+        finally:
+            conn.close()
+
+    scheduler.add_job(func=check_upcoming_reservations, trigger='interval', minutes=5)
+    scheduler.add_job(func=check_upcoming_loans, trigger='interval', minutes=5)
     scheduler.start()
 except ImportError:
     pass
+
+@app.route('/api/public/info', methods=['GET'])
+def public_info():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id, nombre, tipo, capacidad, equipamiento FROM SALA WHERE estado = 'ACTIVA' ORDER BY nombre")
+            salas = serialize_rows(cursor.fetchall())
+            cursor.execute("""
+                SELECT id, nombre, fecha, lugar, descripcion, estado
+                FROM EVENTO WHERE fecha >= NOW() AND estado IN ('PLANIFICADO','EN_PROGRESO')
+                ORDER BY fecha LIMIT 5
+            """)
+            eventos = serialize_rows(cursor.fetchall())
+            cursor.execute("SELECT COUNT(*) total FROM SOCIO WHERE estado = 'ACTIVO'")
+            socios = cursor.fetchone()['total']
+        return ok({'salas': salas, 'proximos_eventos': eventos, 'socios_activos': socios, 'club': 'Club de Música PUCESA'})
+    finally:
+        conn.close()
+
+
+@app.route('/api/public/disponibilidad', methods=['GET'])
+def public_disponibilidad():
+    fecha_str = request.args.get('fecha')
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT id, nombre, tipo, capacidad FROM SALA WHERE estado = 'ACTIVA'")
+            salas = cursor.fetchall()
+            resultado = []
+            for sala in salas:
+                if fecha_str:
+                    cursor.execute("""
+                        SELECT COUNT(*) total FROM RESERVA
+                        WHERE sala_id = %s AND DATE(fecha_inicio) = %s
+                        AND estado IN ('CONFIRMADA','REPROGRAMADA') AND eliminado_en IS NULL
+                    """, (sala['id'], fecha_str))
+                    reservas_hoy = cursor.fetchone()['total']
+                    sala['disponible_hoy'] = reservas_hoy == 0
+                resultado.append(serialize_row(sala))
+        return ok(resultado)
+    finally:
+        conn.close()
+
+
+@app.route('/api/reportes/reservas', methods=['GET'])
+@require_auth
+def export_reservas():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            is_admin = request.user.get('rol') == 'ADMIN'
+            user_id = request.user.get('id')
+            start = request.args.get('start')
+            end = request.args.get('end')
+            
+            sql = """
+                SELECT r.id, s.nombre AS socio, sa.nombre AS sala,
+                       r.fecha_inicio, r.fecha_fin, r.estado, r.observaciones, r.fecha_creacion
+                FROM RESERVA r
+                JOIN SOCIO s ON s.id = r.socio_id
+                JOIN SALA sa ON sa.id = r.sala_id
+                WHERE r.eliminado_en IS NULL
+            """
+            params = []
+            if not is_admin:
+                sql += ' AND r.socio_id = %s'
+                params.append(user_id)
+            if start:
+                sql += ' AND DATE(r.fecha_inicio) >= %s'
+                params.append(start)
+            if end:
+                sql += ' AND DATE(r.fecha_fin) <= %s'
+                params.append(end)
+                
+            sql += ' ORDER BY r.fecha_inicio DESC LIMIT 500'
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['ID', 'Socio', 'Sala', 'Inicio', 'Fin', 'Estado', 'Observaciones', 'Creado'])
+        for row in rows:
+            writer.writerow([
+                row['id'], row['socio'], row['sala'],
+                str(row['fecha_inicio']), str(row['fecha_fin']),
+                row['estado'], row.get('observaciones', ''), str(row['fecha_creacion'])
+            ])
+        csv_content = output.getvalue()
+
+        return Response(
+            csv_content,
+            mimetype='text/csv',
+            headers={'Content-Disposition': 'attachment;filename=reservas.csv', 'Content-Type': 'text/csv; charset=utf-8'}
+        )
+    finally:
+        conn.close()
+
+
+@app.route('/api/reportes/prestamos', methods=['GET'])
+@require_auth
+def export_prestamos():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            is_admin = request.user.get('rol') == 'ADMIN'
+            user_id = request.user.get('id')
+            sql = """
+                SELECT p.id, s.nombre AS socio, i.nombre AS instrumento,
+                       p.fecha_salida, p.fecha_limite, p.fecha_devolucion,
+                       p.estado, p.observaciones
+                FROM PRESTAMO p
+                JOIN SOCIO s ON s.id = p.socio_id
+                JOIN INSTRUMENTO i ON i.id = p.instrumento_id
+                WHERE p.eliminado_en IS NULL
+            """
+            params = []
+            if not is_admin:
+                sql += ' AND p.socio_id = %s'
+                params.append(user_id)
+            sql += ' ORDER BY p.fecha_salida DESC LIMIT 500'
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['ID', 'Socio', 'Instrumento', 'Salida', 'Límite', 'Devolución', 'Estado', 'Observaciones'])
+        for row in rows:
+            writer.writerow([
+                row['id'], row['socio'], row['instrumento'],
+                str(row['fecha_salida']), str(row['fecha_limite']),
+                str(row.get('fecha_devolucion', '')), row['estado'],
+                row.get('observaciones', '')
+            ])
+        csv_content = output.getvalue()
+
+        return Response(
+            csv_content,
+            mimetype='text/csv',
+            headers={'Content-Disposition': 'attachment;filename=prestamos.csv', 'Content-Type': 'text/csv; charset=utf-8'}
+        )
+    finally:
+        conn.close()
+
+
+@app.route('/api/multas', methods=['GET'])
+@require_auth
+def get_multas():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            is_admin = request.user.get('rol') == 'ADMIN'
+            user_id = request.user.get('id')
+            if is_admin:
+                cursor.execute("""
+                    SELECT m.*, s.nombre AS socio_nombre
+                    FROM MULTA m JOIN SOCIO s ON s.id = m.socio_id
+                    ORDER BY m.fecha_creacion DESC
+                """)
+            else:
+                cursor.execute("""
+                    SELECT m.*, s.nombre AS socio_nombre
+                    FROM MULTA m JOIN SOCIO s ON s.id = m.socio_id
+                    WHERE m.socio_id = %s ORDER BY m.fecha_creacion DESC
+                """, (user_id,))
+            return ok(serialize_rows(cursor.fetchall()))
+    finally:
+        conn.close()
+
+
+@app.route('/api/multas', methods=['POST'])
+@require_admin
+def create_multa():
+    data = parse_json()
+    required = require_fields(data, ["socio_id", "motivo"])
+    if required:
+        return error(required)
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO MULTA (socio_id, prestamo_id, reserva_id, monto, motivo)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (data['socio_id'], data.get('prestamo_id'), data.get('reserva_id'),
+                   data.get('monto', 5.00), data['motivo']))
+            conn.commit()
+            return ok({'message': 'Multa registrada', 'id': cursor.lastrowid}, 201)
+    except Exception as exc:
+        conn.rollback()
+        return error(str(exc), 400)
+    finally:
+        conn.close()
+
+
+@app.route('/api/multas/<int:multa_id>/pagar', methods=['POST'])
+@require_admin
+def pay_multa(multa_id):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                UPDATE MULTA SET estado = 'PAGADA', fecha_pago = NOW() WHERE id = %s
+            """, (multa_id,))
+            conn.commit()
+            return ok({'message': 'Multa marcada como pagada'})
+    except Exception as exc:
+        conn.rollback()
+        return error(str(exc), 400)
+    finally:
+        conn.close()
+
 
 @app.route("/api/statistics/loans", methods=["GET"])
 @require_auth

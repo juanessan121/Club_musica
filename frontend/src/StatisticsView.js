@@ -9,6 +9,20 @@ export default function StatisticsView({ api }) {
   const [loading, setLoading] = useState(true);
   const [groupBy, setGroupBy] = useState('type'); // 'type' or 'instrument'
 
+  const [filterStart, setFilterStart] = useState('');
+  const [filterEnd, setFilterEnd] = useState('');
+
+  const handleExportCSV = () => {
+    const token = localStorage.getItem('token');
+    const API_URL_local = window.location.port === '3001' ? 'http://localhost:5000/api' : `${window.location.origin}/api`;
+    let url = `${API_URL_local}/reportes/reservas?`;
+    if (filterStart) url += `start=${filterStart}&`;
+    if (filterEnd) url += `end=${filterEnd}&`;
+    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.blob()).then(blob => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'reservas_filtrado.csv'; a.click(); });
+  };
+
+
   useEffect(() => {
     let mounted = true;
     api('/statistics/loans').then((res) => {
@@ -31,6 +45,23 @@ export default function StatisticsView({ api }) {
 
   return (
     <div className="stack">
+
+      <section className="panel wide" style={{ marginBottom: '24px', background: 'linear-gradient(135deg, #eff6ff, #dbeafe)', border: '1.5px solid #bfdbfe' }}>
+        <div className="panel-title"><BarChart3 size={18} /><h2>Generador de Reportes</h2></div>
+        <p style={{ fontSize: '0.9rem', color: '#1e3a8a', marginBottom: '16px' }}>Genera reportes detallados en CSV utilizando filtros de fecha para un mejor análisis de la información.</p>
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Fecha Inicio</label>
+            <input className="input" type="date" value={filterStart} onChange={e => setFilterStart(e.target.value)} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Fecha Fin</label>
+            <input className="input" type="date" value={filterEnd} onChange={e => setFilterEnd(e.target.value)} />
+          </div>
+          <button className="button primary" onClick={handleExportCSV} style={{ padding: '0.6rem 1.5rem', background: '#2563eb', border: 'none' }}>Exportar Reservas</button>
+        </div>
+      </section>
+
       <section className="panel wide">
         <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

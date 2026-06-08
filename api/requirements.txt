@@ -4,7 +4,6 @@ PyMySQL==1.1.0
 cryptography==42.0.5
 python-dotenv==1.0.0
 requests==2.31.0
-mariadb==1.1.8
 bcrypt==4.1.2
 PyJWT==2.8.0
 APScheduler==3.10.4

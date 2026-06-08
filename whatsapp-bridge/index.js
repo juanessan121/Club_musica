@@ -62,6 +62,17 @@ client.on('authenticated', () => {
 
 client.on('auth_failure', msg => {
     console.error('Authentication failure', msg);
+    isReady = false;
+});
+
+client.on('disconnected', (reason) => {
+    console.warn('WhatsApp Client disconnected:', reason);
+    isReady = false;
+    // Reintentar inicialización tras 10 segundos
+    setTimeout(() => {
+        console.log('Intentando reconectar WhatsApp...');
+        client.initialize();
+    }, 10000);
 });
 
 client.initialize();
@@ -72,7 +83,7 @@ app.post('/send', async (req, res) => {
         return res.status(503).json({ error: "WhatsApp Client is not ready yet" });
     }
 
-    const { number, message } = req.json ? req.body : req.body;
+    const { number, message } = req.body;
     
     if (!number || !message) {
         return res.status(400).json({ error: "Please provide 'number' and 'message'" });
