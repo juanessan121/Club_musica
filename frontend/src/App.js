@@ -697,6 +697,8 @@ export default function App() {
             isAdmin={isAdmin}
             usersList={usersList}
             instrumentos={availableInstruments}
+            prestamos={prestamos}
+            currentUser={currentUser}
             form={prestamoForm}
             setForm={setPrestamoForm}
             onSubmit={submitPrestamo}
@@ -1042,13 +1044,22 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents
   );
 }
 
-function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, onSubmit, onReturn, isSubmitting }) {
+function PrestamosView({ api, isAdmin, usersList, instrumentos, prestamos, currentUser, form, setForm, onSubmit, onReturn, isSubmitting }) {
   const [data, setData] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [selectedPrestamo, setSelectedPrestamo] = useState(null);
   const opHours = isWithinOperatingHours();
+
+  // Determina si el socio seleccionado (o el usuario actual) ya tiene un préstamo activo
+  const targetUserId = isAdmin ? Number(form.user_id) : currentUser?.id;
+  const hasActiveLoan = targetUserId
+    ? (prestamos || []).some(p => p.user_id === targetUserId && p.estado === 'ACTIVO')
+    : false;
+  const activeLoan = hasActiveLoan
+    ? (prestamos || []).find(p => p.user_id === targetUserId && p.estado === 'ACTIVO')
+    : null;
 
   const prestamoErrors = (() => {
     const errors = {};
@@ -1090,8 +1101,21 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
       <section className="panel">
         <div className="panel-title"><PackageCheck size={18} /><h2>Registrar préstamo</h2></div>
         {!opHours && <OperatingHoursAlert />}
+        {hasActiveLoan && (
+          <div style={{ background: '#fef3c7', border: '1.5px solid #f59e0b', borderRadius: '10px', padding: '12px 16px', marginBottom: '12px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+            <span style={{ fontSize: '1.2rem' }}>⚠️</span>
+            <div>
+              <p style={{ fontWeight: 700, color: '#92400e', margin: '0 0 2px', fontSize: '0.9rem' }}>Préstamo activo pendiente</p>
+              <p style={{ color: '#b45309', margin: 0, fontSize: '0.82rem' }}>
+                {isAdmin
+                  ? `Este socio ya tiene prestado: "${activeLoan?.instrumento_nombre}". Debe devolverlo antes de solicitar otro.`
+                  : `Ya tienes prestado: "${activeLoan?.instrumento_nombre}". Devuélvelo antes de pedir otro instrumento.`}
+              </p>
+            </div>
+          </div>
+        )}
         <form className="form" onSubmit={onSubmit}>
-          <fieldset disabled={!opHours} style={{ border: 'none', padding: 0, margin: 0 }}>
+          <fieldset disabled={!opHours || hasActiveLoan} style={{ border: 'none', padding: 0, margin: 0 }}>
           {isAdmin && (
             <Field label="Socio">
               <SelectInput value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value })} required>
@@ -1138,7 +1162,7 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
               <div style={OPERATING_DATE_WARNING_STYLE}>⛔ {prestamoErrors.fecha_limite}</div>
             )}
           </Field>
-          <button className="button primary" type="submit" disabled={!opHours || prestamoHasErrors || isSubmitting}>
+          <button className="button primary" type="submit" disabled={!opHours || hasActiveLoan || prestamoHasErrors || isSubmitting}>
             {isSubmitting ? 'Guardando...' : 'Registrar préstamo'}
           </button>
           </fieldset>

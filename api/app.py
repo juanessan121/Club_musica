@@ -1648,6 +1648,21 @@ def request_loan():
             if cursor.fetchone():
                 return error("El instrumento ya está prestado", 409)
 
+            # Un socio solo puede tener un préstamo activo a la vez
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS total FROM PRESTAMO
+                WHERE socio_id = %s AND estado = 'ACTIVO' AND eliminado_en IS NULL
+                """,
+                (data["user_id"],),
+            )
+            if cursor.fetchone()["total"] > 0:
+                return error(
+                    "Este socio ya tiene un préstamo activo. "
+                    "Debe devolver el instrumento actual antes de solicitar otro.",
+                    409,
+                )
+
             cursor.execute(
                 "SELECT nombre, telefono FROM SOCIO WHERE id = %s",
                 (data["user_id"],),
