@@ -413,7 +413,7 @@ INSERT INTO INSTRUMENTO (
     ('Casio CT-X700', 4, 'Casio', 'CT-X700', 'CS-404040', '2025-04-05', 'DISPONIBLE', 'Bodega principal'),
     ('Nord Stage 3', 4, 'Nord', 'Stage 3 Compact', 'ND-505050', '2024-06-18', 'DISPONIBLE', 'Estudio de Grabación'),
     -- Micrófonos (tipo 5)
-    ('Shure SM58', 5, 'Shure', 'SM58', 'SH-556677', '2025-09-01', 'PRESTADO', 'Cabina de audio'),
+    ('Shure SM58', 5, 'Shure', 'SM58', 'SH-556677', '2025-09-01', 'DISPONIBLE', 'Cabina de audio'),
     ('AKG C214', 5, 'AKG', 'C214', 'AK-505050', '2025-01-08', 'DISPONIBLE', 'Estudio de Grabación'),
     ('Audio-Technica AT2020', 5, 'Audio-Technica', 'AT2020', 'AT-606060', '2024-12-15', 'DISPONIBLE', 'Estudio de Grabación'),
     ('Sennheiser e835', 5, 'Sennheiser', 'e835', 'SE-707070', '2025-02-10', 'DISPONIBLE', 'Cabina de audio'),
@@ -467,12 +467,16 @@ INSERT INTO SETLIST (participacion_id, cancion_id, orden, notas) VALUES
 INSERT INTO RESERVA (
     socio_id, sala_id, fecha_inicio, fecha_fin, estado, observaciones, creado_por, modificado_por
 ) VALUES
-    (2, 1, '2026-05-20 15:00:00', '2026-05-20 17:00:00', 'CONFIRMADA', 'Ensayo de bajo y batería', 'SEED', 'SEED'),
-    (3, 2, '2026-05-21 10:00:00', '2026-05-21 12:00:00', 'CONFIRMADA', 'Grabación demo', 'SEED', 'SEED'),
-    (4, 3, '2026-05-22 14:00:00', '2026-05-22 15:30:00', 'REPROGRAMADA', 'Clase práctica', 'SEED', 'SEED');
+    (2, 1, DATE_ADD(CURDATE(), INTERVAL 2 DAY) + INTERVAL 15 HOUR, DATE_ADD(CURDATE(), INTERVAL 2 DAY) + INTERVAL 17 HOUR, 'CONFIRMADA', 'Ensayo de bajo y batería', 'SEED', 'SEED'),
+    (3, 2, DATE_ADD(CURDATE(), INTERVAL 4 DAY) + INTERVAL 10 HOUR, DATE_ADD(CURDATE(), INTERVAL 4 DAY) + INTERVAL 12 HOUR, 'CONFIRMADA', 'Grabación demo', 'SEED', 'SEED'),
+    (1, 3, DATE_ADD(CURDATE(), INTERVAL 6 DAY) + INTERVAL 14 HOUR, DATE_ADD(CURDATE(), INTERVAL 6 DAY) + INTERVAL 16 HOUR, 'CONFIRMADA', 'Ensayo general banda', 'SEED', 'SEED'),
+    (4, 1, DATE_ADD(CURDATE(), INTERVAL 7 DAY) + INTERVAL 9 HOUR, DATE_ADD(CURDATE(), INTERVAL 7 DAY) + INTERVAL 10 HOUR + INTERVAL 30 MINUTE, 'CONFIRMADA', 'Clase práctica de piano', 'SEED', 'SEED');
+
+-- Asegurar consistencia: instrumento prestado tiene estado PRESTADO
+UPDATE INSTRUMENTO SET estado = 'PRESTADO' WHERE numero_serie = 'SQ-444444';
 
 INSERT INTO PRESTAMO (
     socio_id, instrumento_id, fecha_salida, fecha_limite, estado,
     observaciones, creado_por, modificado_por
 ) VALUES
-    (3, 5, '2026-05-18', '2026-05-25', 'ACTIVO', 'Festival Cultural PUCE Ambato | Garantía: Cédula de Identidad', 'SEED', 'SEED');
+    (3, 5, NOW() - INTERVAL 2 DAY, NOW() + INTERVAL 14 DAY, 'ACTIVO', 'Festival Cultural PUCE Ambato | Garantía: Cédula de Identidad', 'SEED', 'SEED');

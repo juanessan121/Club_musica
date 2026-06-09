@@ -1,15 +1,19 @@
 import base64
 import hashlib
 import hmac
+import html as _html
 import os
+import re as _re
 from datetime import date, datetime, timedelta
 from functools import wraps
 import string
 import random
 import smtplib
-import csv
 import io
 import threading
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
@@ -26,43 +30,95 @@ except ImportError:
 
 
 app = Flask(__name__)
+
+# ── Configuración de seguridad ───────────────────────────────────────────────
 ALLOWED_ORIGINS = os.environ.get(
     "CORS_ALLOWED_ORIGINS",
     "http://localhost:3001,http://localhost:8088,http://127.0.0.1:3001"
 ).split(",")
 CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
 
-DB_HOST = os.environ.get("DB_HOST", "db-mariadb")
-DB_USER = os.environ.get("DB_USER", "clubmusica")
+DB_HOST     = os.environ.get("DB_HOST", "db-mariadb")
+DB_USER     = os.environ.get("DB_USER", "clubmusica")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "clubmusica_secret_2026")
-DB_NAME = os.environ.get("DB_NAME", "club_musica")
+DB_NAME     = os.environ.get("DB_NAME", "club_musica")
 WHATSAPP_BRIDGE_URL = os.environ.get("WHATSAPP_BRIDGE_URL", "http://whatsapp-bridge:3002")
-DEFAULT_PASSWORD = os.environ.get("DEFAULT_USER_PASSWORD", "Musica2026!")
-JWT_SECRET = os.environ.get("JWT_SECRET", "super-secret-key-2026")
+DEFAULT_PASSWORD    = os.environ.get("DEFAULT_USER_PASSWORD", "Musica2026!")
+
+JWT_SECRET    = os.environ.get("JWT_SECRET", "super-secret-key-2026")
 JWT_ALGORITHM = "HS256"
-SCHEMA_READY = False
+JWT_EXPIRY_HOURS = int(os.environ.get("JWT_EXPIRY_HOURS", "24"))
+
 SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
 SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
 SMTP_USER = os.environ.get('SMTP_USER', 'proyectoserror404@gmail.com')
 SMTP_PASS = os.environ.get('SMTP_PASS', '')
 SMTP_FROM = os.environ.get('SMTP_FROM', 'proyectoserror404@gmail.com')
 
+SCHEMA_READY = False
+
+# Advertencia de seguridad si JWT_SECRET es débil
+if len(JWT_SECRET) < 32 or JWT_SECRET in ("super-secret-key-2026", "cambia-este-secreto-en-produccion"):
+    print("[SECURITY WARNING] JWT_SECRET is weak or default. Set a strong random secret (min 32 chars).")
+
+# ── Blacklist de tokens revocados (logout) ───────────────────────────────────
+_revoked_tokens: set = set()
+
+# ── Security headers en todas las respuestas ────────────────────────────────
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Content-Type-Options']  = 'nosniff'
+    response.headers['X-Frame-Options']          = 'DENY'
+    response.headers['X-XSS-Protection']         = '1; mode=block'
+    response.headers['Referrer-Policy']           = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy']        = 'geolocation=(), microphone=(), camera=()'
+    response.headers.pop('Server', None)
+    return response
+
 def get_user_from_token():
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
-    token = auth_header.split(" ")[1]
+    token = auth_header.split(" ", 1)[1]
+    if token in _revoked_tokens:
+        return None
     try:
         return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.InvalidTokenError:
         return None
 
+def _verify_user_in_db(payload):
+    """Verifica que el usuario del token existe, está activo y tiene el rol correcto en BD."""
+    user_id = payload.get("id")
+    if not user_id:
+        return None
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, rol, estado FROM SOCIO WHERE id = %s",
+                (user_id,),
+            )
+            row = cursor.fetchone()
+        conn.close()
+    except Exception as e:
+        print(f"[AUTH] _verify_user_in_db error: {e}")
+        return None
+    if not row or row["estado"] != "ACTIVO":
+        return None
+    # Sobrescribe el rol con el valor real de la BD (no el del token)
+    payload["rol"] = row["rol"]
+    return payload
+
 def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        user = get_user_from_token()
-        if not user:
+        payload = get_user_from_token()
+        if not payload:
             return error("Token inválido o expirado", 401)
+        user = _verify_user_in_db(payload)
+        if not user:
+            return error("Sesión inválida o cuenta inactiva", 401)
         request.user = user
         return f(*args, **kwargs)
     return decorated
@@ -70,9 +126,12 @@ def require_auth(f):
 def require_admin(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        user = get_user_from_token()
-        if not user:
+        payload = get_user_from_token()
+        if not payload:
             return error("Token inválido o expirado", 401)
+        user = _verify_user_in_db(payload)
+        if not user:
+            return error("Sesión inválida o cuenta inactiva", 401)
         if user.get("rol") != "ADMIN":
             return error("No tienes permisos para realizar esta acción", 403)
         request.user = user
@@ -157,10 +216,10 @@ def parse_date(value, field_name):
 
 def hash_password(password):
     if bcrypt:
-        return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=13)).decode("utf-8")
 
     salt = os.urandom(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 120000)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 600000)
     return "pbkdf2_sha256$%s$%s" % (
         base64.b64encode(salt).decode("ascii"),
         base64.b64encode(digest).decode("ascii"),
@@ -176,7 +235,7 @@ def verify_password(password, stored_hash):
         _, salt_b64, digest_b64 = stored_hash.split("$", 2)
         salt = base64.b64decode(salt_b64)
         expected = base64.b64decode(digest_b64)
-        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 120000)
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 600000)
         return hmac.compare_digest(actual, expected)
     return False
 
@@ -267,6 +326,21 @@ def ensure_database_schema():
             except Exception as e:
                 print("Nota: No se pudo alterar PRESTAMO a DATETIME:", e)
 
+            # Fix: instrumentos marcados PRESTADO sin préstamo activo → DISPONIBLE
+            cursor.execute("""
+                UPDATE INSTRUMENTO i
+                SET i.estado = 'DISPONIBLE', i.modificado_por = 'MIGRATION'
+                WHERE i.estado = 'PRESTADO'
+                AND NOT EXISTS (
+                    SELECT 1 FROM PRESTAMO p
+                    WHERE p.instrumento_id = i.id
+                    AND p.estado = 'ACTIVO'
+                    AND p.eliminado_en IS NULL
+                )
+            """)
+            if cursor.rowcount > 0:
+                print(f"[MIGRATION] Corregidos {cursor.rowcount} instrumentos PRESTADO sin préstamo activo.")
+
             conn.commit()
             SCHEMA_READY = True
     except Exception:
@@ -302,9 +376,13 @@ def normalize_socio_estado(value):
     return normalized if normalized in allowed else "ACTIVO"
 
 
+def _now_local():
+    """Hora actual en Ecuador (UTC-5) como datetime naive, independiente del timezone del servidor."""
+    return datetime.utcnow() - timedelta(hours=5)
+
 def within_operating_hours():
-    """Lunes a sábado hasta las 12:00. Sábado tarde y domingo bloqueados."""
-    now = datetime.now()
+    """Lunes a sábado hasta las 12:00 hora Ecuador. Sábado tarde y domingo bloqueados."""
+    now = _now_local()
     weekday = now.weekday()  # 0=Lun … 5=Sáb, 6=Dom
     if weekday == 6:
         return False
@@ -431,7 +509,8 @@ def send_email_async(to_email, subject, html_body):
 
 
 def build_email_reserva_confirmada(nombre, sala_nombre, fecha_inicio, fecha_fin, reserva_id):
-    """HTML template for reservation confirmation email."""
+    nombre, sala_nombre = _html.escape(str(nombre)), _html.escape(str(sala_nombre))
+    fecha_inicio, fecha_fin = _html.escape(str(fecha_inicio)), _html.escape(str(fecha_fin))
     return f"""
 <!DOCTYPE html>
 <html lang="es">
@@ -525,7 +604,7 @@ def build_email_reserva_confirmada(nombre, sala_nombre, fecha_inicio, fecha_fin,
 
 
 def build_email_reserva_cancelada(nombre, sala_nombre, fecha_inicio, reserva_id):
-    """HTML template for reservation cancellation email."""
+    nombre, sala_nombre, fecha_inicio = _html.escape(str(nombre)), _html.escape(str(sala_nombre)), _html.escape(str(fecha_inicio))
     return f"""
 <!DOCTYPE html>
 <html lang="es">
@@ -619,10 +698,11 @@ def login():
                 "id": socio["id"],
                 "email": socio["email"],
                 "rol": "ADMIN" if is_admin else "SOCIO",
-                "exp": datetime.utcnow() + timedelta(days=7)
+                "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
+                "iat": datetime.utcnow(),
             }
             token = jwt.encode(token_payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-            
+
             return ok({"user": socio_public(socio), "is_admin": is_admin, "token": token})
     except Exception as exc:
         conn.rollback()
@@ -635,6 +715,18 @@ def login():
 @app.route("/api/auth/register", methods=["POST"])
 def register():
     return create_user()
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+@require_auth
+def logout():
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.split(" ", 1)[1] if " " in auth_header else ""
+    if token:
+        _revoked_tokens.add(token)
+        if len(_revoked_tokens) > 10000:
+            _revoked_tokens.clear()
+    return ok({"message": "Sesión cerrada correctamente"})
 
 
 @app.route("/api/auth/recover", methods=["POST"])
@@ -650,7 +742,8 @@ def recover_password():
             cursor.execute("SELECT id, nombre, telefono FROM SOCIO WHERE email = %s AND estado = 'ACTIVO'", (email,))
             socio = cursor.fetchone()
             if not socio:
-                return error("No se encontró un usuario activo con ese correo", 404)
+                # Respuesta genérica para evitar enumeración de emails
+                return ok({"message": "Si el correo existe, recibirás tu PIN de acceso temporal."}, 200)
             
             pin = ''.join(random.choices(string.digits, k=6))
             new_hash = hash_password(pin)
@@ -725,8 +818,8 @@ def create_user():
         return error(required)
 
     email = data["email_institucional"].strip().lower()
-    if not email.endswith("@pucesa.edu.ec"):
-        return error("El correo debe pertenecer al dominio @pucesa.edu.ec")
+    if not _re.match(r'^[^@\s]+@pucesa\.edu\.ec$', email):
+        return error("El correo debe tener el formato usuario@pucesa.edu.ec")
 
     conn = get_db_connection()
     try:
@@ -1095,14 +1188,60 @@ def inventory_detail(item_id):
             if request.user.get("rol") != "ADMIN":
                 return error("No tienes permisos para modificar instrumentos", 403)
             data = parse_json()
+
+            # Leer estado actual del instrumento
+            cursor.execute("SELECT estado FROM INSTRUMENTO WHERE id = %s", (item_id,))
+            current_inst = cursor.fetchone()
+            if not current_inst:
+                return error("Instrumento no encontrado", 404)
+            current_estado = current_inst["estado"]
+
             updates = []
             if "tipo" in data:
                 updates.append(("tipo_instrumento_id", get_or_create_tipo_instrumento(cursor, data.get("tipo"))))
             for field in ["nombre", "marca", "modelo", "numero_serie", "ubicacion"]:
                 if field in data:
                     updates.append((field, data[field]))
+
             if "estado" in data:
-                updates.append(("estado", normalize_instrumento_estado(data.get("estado"))))
+                nuevo_estado = normalize_instrumento_estado(data.get("estado"))
+
+                # Bloquear cambios manuales si el instrumento está PRESTADO
+                if current_estado == "PRESTADO":
+                    return error(
+                        "No se puede cambiar el estado de un instrumento que está prestado. "
+                        "Primero registra la devolución del préstamo activo.",
+                        409,
+                    )
+
+                # Transiciones válidas
+                _VALID_TRANSITIONS = {
+                    "DISPONIBLE":    {"MANTENIMIENTO", "BAJA"},
+                    "MANTENIMIENTO": {"DISPONIBLE", "BAJA"},
+                    "BAJA":          {"DISPONIBLE", "MANTENIMIENTO"},
+                    "PRESTADO":      set(),  # solo el sistema de préstamos puede cambiar este
+                }
+                allowed = _VALID_TRANSITIONS.get(current_estado, set())
+                if nuevo_estado != current_estado and nuevo_estado not in allowed:
+                    return error(
+                        f"Transición de estado no permitida: {current_estado} → {nuevo_estado}",
+                        400,
+                    )
+
+                # Verificar doble seguridad: no debe haber préstamo activo aunque el estado no diga PRESTADO
+                cursor.execute(
+                    "SELECT id FROM PRESTAMO WHERE instrumento_id = %s AND estado = 'ACTIVO' AND eliminado_en IS NULL",
+                    (item_id,),
+                )
+                if cursor.fetchone():
+                    return error(
+                        "Este instrumento tiene un préstamo activo registrado. "
+                        "Registra la devolución antes de modificar su estado.",
+                        409,
+                    )
+
+                updates.append(("estado", nuevo_estado))
+
             updates.append(("modificado_por", data.get("modificado_por", "API")))
             sql = ", ".join([f"{field} = %s" for field, _ in updates])
             cursor.execute(f"UPDATE INSTRUMENTO SET {sql} WHERE id = %s", [value for _, value in updates] + [item_id])
@@ -1304,11 +1443,22 @@ def create_reservation():
     required = require_fields(data, ["user_id", "sala_id", "fecha_inicio", "fecha_fin"])
     if required:
         return error(required)
+
+    # Un SOCIO solo puede crear reservas para sí mismo
+    is_admin = request.user.get("rol") == "ADMIN"
+    requester_id = request.user.get("id")
+    target_user_id = int(data["user_id"])
+    if not is_admin and target_user_id != requester_id:
+        return error("No puedes crear reservas para otro usuario", 403)
+
     try:
         fecha_inicio = parse_datetime(data["fecha_inicio"], "fecha_inicio")
         fecha_fin = parse_datetime(data["fecha_fin"], "fecha_fin")
     except ValueError as exc:
         return error(str(exc))
+
+    if fecha_inicio < _now_local():
+        return error("La fecha de inicio no puede estar en el pasado", 400)
 
     if not is_valid_operating_date(fecha_inicio):
         return error(OPERATING_DATE_MSG, 400)
@@ -1337,7 +1487,7 @@ def create_reservation():
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    data["user_id"],
+                    target_user_id,
                     data["sala_id"],
                     fecha_inicio,
                     fecha_fin,
@@ -1412,7 +1562,7 @@ def reservation_calendar():
     try:
         with conn.cursor() as cursor:
             sql = """
-                SELECT r.id, r.socio_id, r.fecha_inicio AS start, r.fecha_fin AS end, r.estado,
+                SELECT r.id, r.socio_id, r.sala_id, r.fecha_inicio AS start, r.fecha_fin AS end, r.estado,
                        s.nombre AS nombre_completo, sa.nombre AS sala_nombre
                 FROM RESERVA r
                 JOIN SOCIO s ON s.id = r.socio_id
@@ -1602,6 +1752,12 @@ def request_loan():
     if required:
         return error(required)
 
+    # Un SOCIO solo puede pedir préstamos para sí mismo
+    _is_admin = request.user.get("rol") == "ADMIN"
+    _requester_id = request.user.get("id")
+    if not _is_admin and int(data["user_id"]) != _requester_id:
+        return error("No puedes solicitar préstamos en nombre de otro usuario", 403)
+
     try:
         fecha_salida = parse_datetime(data["fecha_salida"], "fecha_salida")
         fecha_limite = parse_datetime(data["fecha_limite"], "fecha_limite")
@@ -1735,17 +1891,19 @@ def return_loan(prestamo_id):
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT instrumento_id FROM PRESTAMO WHERE id = %s AND eliminado_en IS NULL",
+                "SELECT instrumento_id, estado FROM PRESTAMO WHERE id = %s AND eliminado_en IS NULL",
                 (prestamo_id,),
             )
             loan = cursor.fetchone()
             if not loan:
                 return error("Préstamo no encontrado", 404)
+            if loan["estado"] == "DEVUELTO":
+                return error("Este préstamo ya fue devuelto anteriormente", 409)
             cursor.execute(
                 """
                 UPDATE PRESTAMO
                 SET estado = 'DEVUELTO', fecha_devolucion = CURRENT_TIMESTAMP, modificado_por = 'API'
-                WHERE id = %s
+                WHERE id = %s AND estado IN ('ACTIVO', 'VENCIDO')
                 """,
                 (prestamo_id,),
             )
@@ -1895,7 +2053,7 @@ def check_overdue_loans():
             vencidos = cursor.fetchall()
             
             for p in vencidos:
-                cursor.execute("UPDATE PRESTAMO SET estado = 'VENCIDO' WHERE id = %s", (p["id"],))
+                cursor.execute("UPDATE PRESTAMO SET estado = 'VENCIDO', modificado_por = 'CRON' WHERE id = %s", (p["id"],))
                 primer_nombre = p["nombre"].split(" ")[0]
                 notify_whatsapp(
                     p["telefono"],
@@ -1916,6 +2074,7 @@ def check_overdue_loans():
         conn.close()
 
 _notified_loan_ids: set = set()
+_MAX_NOTIFIED_CACHE = 5000  # evitar crecimiento ilimitado en producción
 
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
@@ -1976,6 +2135,8 @@ try:
                             f"⏳ Hola {primer_nombre}, tu préstamo de *{p['instrumento_nombre']}* vence el {fecha_str}. Por favor devúelvelo a tiempo para evitar una multa."
                         )
                         _notified_loan_ids.add(p['id'])
+                        if len(_notified_loan_ids) > _MAX_NOTIFIED_CACHE:
+                            _notified_loan_ids.clear()
         except Exception as exc:
             print('Error en reminder préstamos:', exc)
         finally:
@@ -2031,6 +2192,73 @@ def public_disponibilidad():
         conn.close()
 
 
+def _build_xlsx(title, subtitle, headers, col_widths, rows_data):
+    """Genera un workbook de Excel con estilo profesional."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = title
+
+    # Paleta
+    COLOR_HEADER_BG = '1E3A5F'   # azul marino
+    COLOR_HEADER_FG = 'FFFFFF'
+    COLOR_TITLE_BG  = '2563EB'   # azul brillante
+    COLOR_ROW_ALT   = 'EFF6FF'   # azul muy claro
+    COLOR_ROW_EVEN  = 'FFFFFF'
+    COLOR_BORDER    = 'CBD5E1'
+
+    thin = Side(style='thin', color=COLOR_BORDER)
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # ── Título (fila 1, fusionada) ──────────────────────────────────────────
+    n_cols = len(headers)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_cols)
+    title_cell = ws.cell(row=1, column=1, value=title)
+    title_cell.font      = Font(name='Calibri', bold=True, size=16, color=COLOR_HEADER_FG)
+    title_cell.fill      = PatternFill('solid', fgColor=COLOR_TITLE_BG)
+    title_cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[1].height = 32
+
+    # ── Subtítulo (fila 2) ──────────────────────────────────────────────────
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=n_cols)
+    sub_cell = ws.cell(row=2, column=1, value=subtitle)
+    sub_cell.font      = Font(name='Calibri', italic=True, size=10, color='64748B')
+    sub_cell.alignment = Alignment(horizontal='center', vertical='center')
+    ws.row_dimensions[2].height = 18
+
+    # ── Cabeceras (fila 3) ──────────────────────────────────────────────────
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=3, column=col_idx, value=header)
+        cell.font      = Font(name='Calibri', bold=True, size=11, color=COLOR_HEADER_FG)
+        cell.fill      = PatternFill('solid', fgColor=COLOR_HEADER_BG)
+        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        cell.border    = border
+    ws.row_dimensions[3].height = 22
+
+    # ── Datos (fila 4 en adelante) ──────────────────────────────────────────
+    for row_idx, row_values in enumerate(rows_data, start=4):
+        bg = COLOR_ROW_ALT if row_idx % 2 == 0 else COLOR_ROW_EVEN
+        fill = PatternFill('solid', fgColor=bg)
+        for col_idx, value in enumerate(row_values, start=1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.font      = Font(name='Calibri', size=10)
+            cell.fill      = fill
+            cell.border    = border
+            cell.alignment = Alignment(vertical='center', wrap_text=False)
+        ws.row_dimensions[row_idx].height = 17
+
+    # ── Anchos de columna ───────────────────────────────────────────────────
+    for col_idx, width in enumerate(col_widths, start=1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    # ── Congelar cabeceras ──────────────────────────────────────────────────
+    ws.freeze_panes = 'A4'
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
 @app.route('/api/reportes/reservas', methods=['GET'])
 @require_admin
 def export_reservas():
@@ -2038,16 +2266,18 @@ def export_reservas():
     try:
         with conn.cursor() as cursor:
             is_admin = request.user.get('rol') == 'ADMIN'
-            user_id = request.user.get('id')
-            start = request.args.get('start')
-            end = request.args.get('end')
-            
+            user_id  = request.user.get('id')
+            start    = request.args.get('start')
+            end      = request.args.get('end')
+
             sql = """
                 SELECT r.id, s.nombre AS socio, sa.nombre AS sala,
-                       r.fecha_inicio, r.fecha_fin, r.estado, r.observaciones, r.fecha_creacion
+                       r.fecha_inicio, r.fecha_fin, r.estado,
+                       COALESCE(r.observaciones, '') AS observaciones,
+                       r.fecha_creacion
                 FROM RESERVA r
-                JOIN SOCIO s ON s.id = r.socio_id
-                JOIN SALA sa ON sa.id = r.sala_id
+                JOIN SOCIO s  ON s.id  = r.socio_id
+                JOIN SALA  sa ON sa.id = r.sala_id
                 WHERE r.eliminado_en IS NULL
             """
             params = []
@@ -2060,26 +2290,33 @@ def export_reservas():
             if end:
                 sql += ' AND DATE(r.fecha_fin) <= %s'
                 params.append(end)
-                
             sql += ' ORDER BY r.fecha_inicio DESC LIMIT 500'
             cursor.execute(sql, params)
             rows = cursor.fetchall()
 
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(['ID', 'Socio', 'Sala', 'Inicio', 'Fin', 'Estado', 'Observaciones', 'Creado'])
-        for row in rows:
-            writer.writerow([
-                row['id'], row['socio'], row['sala'],
-                str(row['fecha_inicio']), str(row['fecha_fin']),
-                row['estado'], row.get('observaciones', ''), str(row['fecha_creacion'])
-            ])
-        csv_content = output.getvalue()
+        subtitle = f'Generado el {datetime.now().strftime("%d/%m/%Y %H:%M")} · {len(rows)} registros'
+        headers   = ['ID', 'Socio', 'Sala', 'Inicio', 'Fin', 'Duración (h)', 'Estado', 'Observaciones', 'Fecha registro']
+        col_widths = [6, 24, 26, 22, 22, 14, 14, 32, 22]
 
+        rows_data = []
+        for r in rows:
+            fi = r['fecha_inicio']
+            ff = r['fecha_fin']
+            duracion = round((ff - fi).total_seconds() / 3600, 2) if fi and ff else ''
+            rows_data.append([
+                r['id'], r['socio'], r['sala'],
+                fi.strftime('%d/%m/%Y %H:%M') if fi else '',
+                ff.strftime('%d/%m/%Y %H:%M') if ff else '',
+                duracion,
+                r['estado'], r['observaciones'],
+                r['fecha_creacion'].strftime('%d/%m/%Y %H:%M') if r['fecha_creacion'] else '',
+            ])
+
+        buf = _build_xlsx('Reporte de Reservas', subtitle, headers, col_widths, rows_data)
         return Response(
-            csv_content,
-            mimetype='text/csv',
-            headers={'Content-Disposition': 'attachment;filename=reservas.csv', 'Content-Type': 'text/csv; charset=utf-8'}
+            buf.getvalue(),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={'Content-Disposition': 'attachment; filename=reservas.xlsx'}
         )
     finally:
         conn.close()
@@ -2092,13 +2329,17 @@ def export_prestamos():
     try:
         with conn.cursor() as cursor:
             is_admin = request.user.get('rol') == 'ADMIN'
-            user_id = request.user.get('id')
+            user_id  = request.user.get('id')
+            start    = request.args.get('start')
+            end      = request.args.get('end')
+
             sql = """
                 SELECT p.id, s.nombre AS socio, i.nombre AS instrumento,
                        p.fecha_salida, p.fecha_limite, p.fecha_devolucion,
-                       p.estado, p.observaciones
+                       p.estado, COALESCE(p.observaciones, '') AS observaciones,
+                       p.motivo
                 FROM PRESTAMO p
-                JOIN SOCIO s ON s.id = p.socio_id
+                JOIN SOCIO      s ON s.id = p.socio_id
                 JOIN INSTRUMENTO i ON i.id = p.instrumento_id
                 WHERE p.eliminado_en IS NULL
             """
@@ -2106,26 +2347,39 @@ def export_prestamos():
             if not is_admin:
                 sql += ' AND p.socio_id = %s'
                 params.append(user_id)
+            if start:
+                sql += ' AND DATE(p.fecha_salida) >= %s'
+                params.append(start)
+            if end:
+                sql += ' AND DATE(p.fecha_salida) <= %s'
+                params.append(end)
             sql += ' ORDER BY p.fecha_salida DESC LIMIT 500'
             cursor.execute(sql, params)
             rows = cursor.fetchall()
 
-        output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(['ID', 'Socio', 'Instrumento', 'Salida', 'Límite', 'Devolución', 'Estado', 'Observaciones'])
-        for row in rows:
-            writer.writerow([
-                row['id'], row['socio'], row['instrumento'],
-                str(row['fecha_salida']), str(row['fecha_limite']),
-                str(row.get('fecha_devolucion', '')), row['estado'],
-                row.get('observaciones', '')
-            ])
-        csv_content = output.getvalue()
+        subtitle  = f'Generado el {datetime.now().strftime("%d/%m/%Y %H:%M")} · {len(rows)} registros'
+        headers   = ['ID', 'Socio', 'Instrumento', 'Motivo', 'Salida', 'Límite devolución', 'Devuelto el', 'Estado', 'Observaciones']
+        col_widths = [6, 24, 26, 30, 22, 22, 22, 14, 32]
 
+        rows_data = []
+        for r in rows:
+            fs  = r['fecha_salida']
+            fl  = r['fecha_limite']
+            fd  = r['fecha_devolucion']
+            rows_data.append([
+                r['id'], r['socio'], r['instrumento'],
+                r.get('motivo', ''),
+                fs.strftime('%d/%m/%Y %H:%M') if fs else '',
+                fl.strftime('%d/%m/%Y %H:%M') if fl else '',
+                fd.strftime('%d/%m/%Y %H:%M') if fd else '—',
+                r['estado'], r['observaciones'],
+            ])
+
+        buf = _build_xlsx('Reporte de Préstamos', subtitle, headers, col_widths, rows_data)
         return Response(
-            csv_content,
-            mimetype='text/csv',
-            headers={'Content-Disposition': 'attachment;filename=prestamos.csv', 'Content-Type': 'text/csv; charset=utf-8'}
+            buf.getvalue(),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={'Content-Disposition': 'attachment; filename=prestamos.xlsx'}
         )
     finally:
         conn.close()
@@ -2240,4 +2494,4 @@ def statistics_loans():
     finally:
         conn.close()
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(debug=False, host="0.0.0.0", port=5000)

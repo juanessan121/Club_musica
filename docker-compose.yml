@@ -23,8 +23,7 @@ services:
     volumes:
       - mariadb_data:/var/lib/mysql
       - ./schema_musica.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
-    ports:
-      - "${DB_PORT:-3307}:3306"
+    # Puerto de BD NO expuesto al host — acceso solo interno vía red Docker
     networks:
       - club-musica-network
     healthcheck:
