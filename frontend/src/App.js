@@ -670,7 +670,7 @@ export default function App() {
         <Message message={message} />
 
         {activeView === 'dashboard' && (
-          <Dashboard isAdmin={isAdmin} stats={stats} reservas={reservas} prestamos={prestamos} inventario={inventario} currentUser={currentUser} />
+          <Dashboard isAdmin={isAdmin} stats={stats} reservas={reservas} prestamos={prestamos} inventario={inventario} currentUser={currentUser} salas={salas} />
         )}
         {activeView === 'calendario' && (
           <CalendarioView events={calendarEvents} currentUser={currentUser} setActiveView={setActiveView} setForm={setReservaForm} />
@@ -797,7 +797,13 @@ function PerfilView({ api, currentUser, loadData, setCurrentUser }) {
   );
 }
 
-function Dashboard({ isAdmin, stats, reservas, prestamos, inventario, currentUser }) {
+function Dashboard({ isAdmin, stats, reservas, prestamos, inventario, currentUser, salas }) {
+  const [fSocio, setFSocio] = useState('');
+  const [fSala, setFSala] = useState('');
+  const [fFechaInicio, setFFechaInicio] = useState('');
+  const [fFechaFin, setFFechaFin] = useState('');
+  const [fInstrumento, setFInstrumento] = useState('');
+
   const myLoans = currentUser
     ? prestamos.filter((p) => p.user_id === currentUser.id && p.estado === 'ACTIVO')
     : [];
@@ -809,9 +815,36 @@ function Dashboard({ isAdmin, stats, reservas, prestamos, inventario, currentUse
     ['Reservas confirmadas', stats?.reservas_confirmadas ?? reservas.length],
     ['Préstamos activos', stats?.prestamos_activos ?? prestamos.filter((p) => p.estado === 'ACTIVO').length],
   ] : [
-    ['Tus reservas confirmadas', stats?.reservas_confirmadas ?? 0],
-    ['Tus préstamos activos', stats?.prestamos_activos ?? 0],
+    ['Tus reservas confirmadas', reservas.filter(r => r.estado === 'CONFIRMADA').length],
+    ['Tus préstamos activos', myLoans.length],
   ];
+
+  // Fuente de reservas: siempre usar el array completo para poder filtrar
+  const allUpcoming = reservas.filter(r =>
+    new Date(r.fecha_inicio) > new Date() && r.estado === 'CONFIRMADA'
+  );
+
+  const filteredReservas = allUpcoming.filter(r => {
+    if (fSocio && !(r.nombre_completo || '').toLowerCase().includes(fSocio.toLowerCase())) return false;
+    if (fSala && r.sala_nombre !== fSala) return false;
+    if (fFechaInicio && new Date(r.fecha_inicio) < new Date(fFechaInicio)) return false;
+    if (fFechaFin && new Date(r.fecha_inicio) > new Date(fFechaFin + 'T23:59:59')) return false;
+    return true;
+  });
+
+  const activePrestamos = prestamos.filter(p => p.estado === 'ACTIVO');
+  const filteredPrestamos = activePrestamos.filter(p => {
+    if (fSocio && !(p.nombre_completo || '').toLowerCase().includes(fSocio.toLowerCase())) return false;
+    if (fInstrumento && !(p.instrumento_nombre || '').toLowerCase().includes(fInstrumento.toLowerCase())) return false;
+    if (fFechaInicio && new Date(p.fecha_salida) < new Date(fFechaInicio)) return false;
+    if (fFechaFin && new Date(p.fecha_salida) > new Date(fFechaFin + 'T23:59:59')) return false;
+    return true;
+  });
+
+  const hasFilters = fSocio || fSala || fFechaInicio || fFechaFin || fInstrumento;
+
+  const inputStyle = { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: '6px', fontSize: '0.83rem', background: 'var(--surface)', color: 'var(--text)', minWidth: 0 };
+  const labelStyle = { fontSize: '0.75rem', fontWeight: 600, color: 'var(--muted)', marginBottom: '2px', display: 'block' };
 
   return (
     <div className="stack">
@@ -824,12 +857,51 @@ function Dashboard({ isAdmin, stats, reservas, prestamos, inventario, currentUse
         ))}
       </div>
 
+      {/* Panel de filtros */}
+      <section className="panel" style={{ paddingBottom: '16px' }}>
+        <div className="panel-title" style={{ marginBottom: '12px' }}>
+          <Activity size={18} />
+          <h2>Filtros de actividad</h2>
+          {hasFilters && (
+            <button className="button ghost" style={{ marginLeft: 'auto', fontSize: '0.78rem', padding: '3px 10px' }}
+              onClick={() => { setFSocio(''); setFSala(''); setFFechaInicio(''); setFFechaFin(''); setFInstrumento(''); }}>
+              Limpiar filtros
+            </button>
+          )}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px' }}>
+          {isAdmin && (
+            <div>
+              <label style={labelStyle}>Socio</label>
+              <input style={inputStyle} placeholder="Buscar socio..." value={fSocio} onChange={e => setFSocio(e.target.value)} />
+            </div>
+          )}
+          <div>
+            <label style={labelStyle}>Sala</label>
+            <select style={inputStyle} value={fSala} onChange={e => setFSala(e.target.value)}>
+              <option value="">Todas las salas</option>
+              {(salas || []).map(s => <option key={s.id} value={s.nombre}>{s.nombre}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Instrumento</label>
+            <input style={inputStyle} placeholder="Buscar instrumento..." value={fInstrumento} onChange={e => setFInstrumento(e.target.value)} />
+          </div>
+          <div>
+            <label style={labelStyle}>Fecha desde</label>
+            <input style={inputStyle} type="date" value={fFechaInicio} onChange={e => setFFechaInicio(e.target.value)} />
+          </div>
+          <div>
+            <label style={labelStyle}>Fecha hasta</label>
+            <input style={inputStyle} type="date" value={fFechaFin} onChange={e => setFFechaFin(e.target.value)} />
+          </div>
+        </div>
+      </section>
+
+      {/* Préstamos activos (socio: solo los suyos; admin: todos filtrados) */}
       {!isAdmin && myLoans.length > 0 && (
         <section className="panel">
-          <div className="panel-title">
-            <PackageCheck size={18} />
-            <h2>Tus préstamos activos</h2>
-          </div>
+          <div className="panel-title"><PackageCheck size={18} /><h2>Tus préstamos activos</h2></div>
           <div className="table">
             {myLoans.map((prestamo) => (
               <div className="row" key={prestamo.id}>
@@ -843,28 +915,47 @@ function Dashboard({ isAdmin, stats, reservas, prestamos, inventario, currentUse
         </section>
       )}
 
+      {isAdmin && (
+        <section className="panel">
+          <div className="panel-title"><PackageCheck size={18} /><h2>Préstamos activos</h2>
+            <span style={{ fontSize: '0.8rem', color: 'var(--muted)', marginLeft: 'auto' }}>{filteredPrestamos.length} resultado{filteredPrestamos.length !== 1 ? 's' : ''}</span>
+          </div>
+          <div className="table">
+            {filteredPrestamos.length === 0
+              ? <p style={{ padding: '0.8rem', color: 'var(--muted)', fontSize: '0.88rem' }}>No hay préstamos activos con esos filtros.</p>
+              : filteredPrestamos.map(p => (
+                <div className="row" key={p.id}>
+                  <span style={{ fontWeight: 600 }}>{p.instrumento_nombre}</span>
+                  <span style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>{p.nombre_completo}</span>
+                  <span style={{ fontSize: '0.85rem' }}>Límite: {formatDate(p.fecha_limite)}</span>
+                  <CountdownTimer fechaLimite={p.fecha_limite} />
+                  <Badge value={p.estado} />
+                </div>
+              ))
+            }
+          </div>
+        </section>
+      )}
+
+      {/* Próximas reservas filtradas */}
       <section className="panel">
         <div className="panel-title">
           <Activity size={18} />
           <h2>Próximas reservas</h2>
+          <span style={{ fontSize: '0.8rem', color: 'var(--muted)', marginLeft: 'auto' }}>{filteredReservas.length} resultado{filteredReservas.length !== 1 ? 's' : ''}</span>
         </div>
         <div className="table">
-          {(() => {
-            const upcoming = stats?.proximas_reservas?.length > 0
-              ? stats.proximas_reservas
-              : reservas.filter(r => new Date(r.fecha_inicio) > new Date() && r.estado === 'CONFIRMADA').slice(0, 5);
-            if (upcoming.length === 0) {
-              return <p style={{ padding: '1rem', color: 'var(--muted)', fontSize: '0.9rem' }}>No hay reservas próximas pendientes.</p>;
-            }
-            return upcoming.map((reserva) => (
+          {filteredReservas.length === 0
+            ? <p style={{ padding: '0.8rem', color: 'var(--muted)', fontSize: '0.88rem' }}>No hay reservas próximas con esos filtros.</p>
+            : filteredReservas.map(reserva => (
               <div className="row" key={reserva.id}>
                 <span>{reserva.sala_nombre}</span>
                 <span>{reserva.nombre_completo || 'Mi reserva'}</span>
                 <span>{formatDate(reserva.fecha_inicio)}</span>
                 <Badge value={reserva.estado || 'CONFIRMADA'} />
               </div>
-            ));
-          })()}
+            ))
+          }
         </div>
       </section>
     </div>
