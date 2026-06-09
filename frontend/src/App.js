@@ -136,7 +136,10 @@ function Message({ message }) {
 
 function formatDate(value) {
   if (!value) return 'Sin fecha';
-  return value.replace('T', ' ').slice(0, 16);
+  const s = value.replace('T', ' ').slice(0, 16);
+  const [datePart, timePart] = s.split(' ');
+  if (!timePart || timePart === '00:00') return datePart;
+  return `${datePart} ${timePart}`;
 }
 
 function CountdownTimer({ fechaLimite }) {
@@ -175,8 +178,9 @@ function isWithinOperatingHours() {
 }
 
 function isValidOperatingDate(dateStr) {
-  if (!dateStr) return true; // vacío: no mostrar error todavía
-  const d = new Date(dateStr);
+  if (!dateStr) return true;
+  // datetime-local strings (YYYY-MM-DDTHH:MM) are parsed as local time — no UTC shift
+  const d = new Date(dateStr.length === 10 ? `${dateStr}T12:00:00` : dateStr);
   const day = d.getDay(); // 0=Dom, 6=Sáb
   if (day === 0) return false;
   if (day === 6 && d.getHours() >= 12) return false;
@@ -1046,24 +1050,24 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
               required
             />
           </Field>
-          <Field label="Fecha de salida">
+          <Field label="Fecha y hora de salida">
             <TextInput
-              type="date"
+              type="datetime-local"
               value={form.fecha_salida}
               onChange={(e) => setForm({ ...form, fecha_salida: e.target.value })}
-              min={today}
+              min={new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
               required
             />
             {!isValidOperatingDate(form.fecha_salida) && (
               <div style={OPERATING_DATE_WARNING_STYLE}>⛔ {OPERATING_DATE_ERROR}</div>
             )}
           </Field>
-          <Field label="Fecha límite de devolución">
+          <Field label="Fecha y hora límite de devolución">
             <TextInput
-              type="date"
+              type="datetime-local"
               value={form.fecha_limite}
               onChange={(e) => setForm({ ...form, fecha_limite: e.target.value })}
-              min={form.fecha_salida || today}
+              min={form.fecha_salida || new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
               required
             />
           </Field>
