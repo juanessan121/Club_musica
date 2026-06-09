@@ -166,6 +166,43 @@ function CountdownTimer({ fechaLimite }) {
   );
 }
 
+function isWithinOperatingHours() {
+  const now = new Date();
+  const day = now.getDay(); // 0=Dom, 1=Lun … 6=Sáb
+  if (day === 0) return false;                         // domingo bloqueado
+  if (day === 6 && now.getHours() >= 12) return false; // sábado tarde bloqueado
+  return true;
+}
+
+function OperatingHoursAlert() {
+  const now = new Date();
+  const day = now.getDay();
+  const dayName = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'][day];
+  return (
+    <div style={{
+      background: '#fef3c7',
+      border: '1.5px solid #f59e0b',
+      borderRadius: '10px',
+      padding: '14px 16px',
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: '12px',
+      marginBottom: '16px',
+    }}>
+      <span style={{ fontSize: '1.4rem', lineHeight: 1 }}>🔒</span>
+      <div>
+        <p style={{ fontWeight: 700, color: '#92400e', margin: '0 0 2px', fontSize: '0.92rem' }}>
+          Fuera del horario de atención — {dayName}
+        </p>
+        <p style={{ color: '#b45309', margin: 0, fontSize: '0.82rem', lineHeight: 1.4 }}>
+          Las reservas, préstamos y devoluciones solo se gestionan de <strong>lunes a sábado hasta las 12:00 del mediodía</strong>.
+          Vuelve en horario hábil para continuar.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function exportToCSV(data, filename) {
   const headers = Object.keys(data[0] || {}).join(',');
   const rows = data.map(row => Object.values(row).map(val => `"${val}"`).join(','));
@@ -792,6 +829,7 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
+  const opHours = isWithinOperatingHours();
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -814,7 +852,9 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
           <section className="panel" style={{ height: 'fit-content' }}>
             <div className="panel-title"><Plus size={18} /><h2>Nueva reserva</h2></div>
+            {!opHours && <OperatingHoursAlert />}
             <form className="form" onSubmit={onSubmit}>
+              <fieldset disabled={!opHours} style={{ border: 'none', padding: 0, margin: 0 }}>
               {isAdmin && (
                 <Field label="Socio">
                   <SelectInput value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value })} required>
@@ -853,7 +893,8 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents
                 <input type="checkbox" checked={form.terminos_aceptados} onChange={(e) => setForm({ ...form, terminos_aceptados: e.target.checked })} />
                 Acepto las condiciones de uso de sala.
               </label>
-              <button className="button primary" type="submit">Confirmar reserva</button>
+              <button className="button primary" type="submit" disabled={!opHours}>Confirmar reserva</button>
+              </fieldset>
             </form>
           </section>
 
@@ -929,6 +970,7 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [selectedPrestamo, setSelectedPrestamo] = useState(null);
+  const opHours = isWithinOperatingHours();
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -949,7 +991,9 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
       )}
       <section className="panel">
         <div className="panel-title"><PackageCheck size={18} /><h2>Registrar préstamo</h2></div>
+        {!opHours && <OperatingHoursAlert />}
         <form className="form" onSubmit={onSubmit}>
+          <fieldset disabled={!opHours} style={{ border: 'none', padding: 0, margin: 0 }}>
           {isAdmin && (
             <Field label="Socio">
               <SelectInput value={form.user_id} onChange={(e) => setForm({ ...form, user_id: e.target.value })} required>
@@ -990,7 +1034,8 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
               required
             />
           </Field>
-          <button className="button primary" type="submit">Registrar préstamo</button>
+          <button className="button primary" type="submit" disabled={!opHours}>Registrar préstamo</button>
+          </fieldset>
         </form>
       </section>
 
@@ -1021,7 +1066,10 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
               {isAdmin && prestamo.estado === 'ACTIVO' && (
                 <button
                   className="link-button"
+                  disabled={!opHours}
+                  title={!opHours ? 'Solo se puede devolver de lunes a sábado hasta las 12:00' : ''}
                   onClick={(e) => { e.stopPropagation(); onReturn(prestamo.id); setPage(page); }}
+                  style={{ opacity: opHours ? 1 : 0.4, cursor: opHours ? 'pointer' : 'not-allowed' }}
                 >
                   Devolver
                 </button>

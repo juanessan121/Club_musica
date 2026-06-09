@@ -302,6 +302,22 @@ def normalize_socio_estado(value):
     return normalized if normalized in allowed else "ACTIVO"
 
 
+def within_operating_hours():
+    """Lunes a sábado hasta las 12:00. Sábado tarde y domingo bloqueados."""
+    now = datetime.now()
+    weekday = now.weekday()  # 0=Lun … 5=Sáb, 6=Dom
+    if weekday == 6:
+        return False
+    if weekday == 5 and now.hour >= 12:
+        return False
+    return True
+
+OPERATING_HOURS_MSG = (
+    "Las reservas y préstamos solo se pueden gestionar "
+    "de lunes a sábado hasta las 12:00 del mediodía."
+)
+
+
 def normalize_sala_tipo(value):
     allowed = {"CUBICULO", "SALON_ACUSTICO", "ESTUDIO"}
     normalized = str(value or "CUBICULO").upper()
@@ -1268,6 +1284,8 @@ def validate_reservation():
 
 
 def create_reservation():
+    if not within_operating_hours():
+        return error(OPERATING_HOURS_MSG, 403)
     data = parse_json()
     required = require_fields(data, ["user_id", "sala_id", "fecha_inicio", "fecha_fin"])
     if required:
@@ -1560,6 +1578,8 @@ def loans_by_status(status):
 @app.route("/api/prestamos/solicitar", methods=["POST"])
 @require_auth
 def request_loan():
+    if not within_operating_hours():
+        return error(OPERATING_HOURS_MSG, 403)
     data = parse_json()
     required = require_fields(data, ["user_id", "inventario_id", "fecha_salida", "fecha_limite", "motivo"])
     if required:
@@ -1661,6 +1681,8 @@ def request_loan():
 @app.route("/api/prestamos/<int:prestamo_id>/devolver", methods=["POST"])
 @require_auth
 def return_loan(prestamo_id):
+    if not within_operating_hours():
+        return error(OPERATING_HOURS_MSG, 403)
     if request.user.get("rol") != "ADMIN":
         return error("Solo administradores pueden registrar devoluciones", 403)
     data = parse_json()
