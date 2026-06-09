@@ -169,10 +169,31 @@ function CountdownTimer({ fechaLimite }) {
 function isWithinOperatingHours() {
   const now = new Date();
   const day = now.getDay(); // 0=Dom, 1=Lun … 6=Sáb
-  if (day === 0) return false;                         // domingo bloqueado
-  if (day === 6 && now.getHours() >= 12) return false; // sábado tarde bloqueado
+  if (day === 0) return false;
+  if (day === 6 && now.getHours() >= 12) return false;
   return true;
 }
+
+function isValidOperatingDate(dateStr) {
+  if (!dateStr) return true; // vacío: no mostrar error todavía
+  const d = new Date(dateStr);
+  const day = d.getDay(); // 0=Dom, 6=Sáb
+  if (day === 0) return false;
+  if (day === 6 && d.getHours() >= 12) return false;
+  return true;
+}
+
+const OPERATING_DATE_ERROR = 'No se permiten reservas ni préstamos en domingo ni sábado a partir de las 12:00.';
+const OPERATING_DATE_WARNING_STYLE = {
+  background: '#fef2f2',
+  border: '1.5px solid #ef4444',
+  borderRadius: '8px',
+  padding: '8px 12px',
+  color: '#b91c1c',
+  fontSize: '0.82rem',
+  fontWeight: 600,
+  marginTop: '4px',
+};
 
 function OperatingHoursAlert() {
   const now = new Date();
@@ -420,6 +441,9 @@ export default function App() {
       const fin = new Date(reservaForm.fecha_fin);
       const ahora = new Date();
 
+      if (!isValidOperatingDate(reservaForm.fecha_inicio)) {
+        throw new Error(OPERATING_DATE_ERROR);
+      }
       if (inicio < ahora) {
         throw new Error('La fecha de inicio no puede estar en el pasado');
       }
@@ -465,6 +489,9 @@ export default function App() {
   async function submitPrestamo(event) {
     event.preventDefault();
     try {
+      if (!isValidOperatingDate(prestamoForm.fecha_salida)) {
+        throw new Error(OPERATING_DATE_ERROR);
+      }
       await api('/prestamos/solicitar', {
         method: 'POST',
         body: JSON.stringify({ ...prestamoForm, user_id: isAdmin ? prestamoForm.user_id : currentUser.id }),
@@ -872,13 +899,16 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents
                 </SelectInput>
               </Field>
               <Field label="Inicio">
-                <TextInput 
-                  type="datetime-local" 
-                  value={form.fecha_inicio} 
-                  onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })} 
+                <TextInput
+                  type="datetime-local"
+                  value={form.fecha_inicio}
+                  onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })}
                   min={new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
-                  required 
+                  required
                 />
+                {!isValidOperatingDate(form.fecha_inicio) && (
+                  <div style={OPERATING_DATE_WARNING_STYLE}>⛔ {OPERATING_DATE_ERROR}</div>
+                )}
               </Field>
               <Field label="Fin">
                 <TextInput 
@@ -1024,6 +1054,9 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
               min={today}
               required
             />
+            {!isValidOperatingDate(form.fecha_salida) && (
+              <div style={OPERATING_DATE_WARNING_STYLE}>⛔ {OPERATING_DATE_ERROR}</div>
+            )}
           </Field>
           <Field label="Fecha límite de devolución">
             <TextInput

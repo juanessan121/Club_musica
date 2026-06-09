@@ -312,9 +312,23 @@ def within_operating_hours():
         return False
     return True
 
+def is_valid_operating_date(dt):
+    """La fecha elegida (inicio de reserva / salida de préstamo) debe caer
+    en día hábil: lunes–viernes cualquier hora, o sábado antes de las 12:00."""
+    weekday = dt.weekday()  # 0=Lun … 5=Sáb, 6=Dom
+    if weekday == 6:
+        return False
+    if weekday == 5 and dt.hour >= 12:
+        return False
+    return True
+
 OPERATING_HOURS_MSG = (
     "Las reservas y préstamos solo se pueden gestionar "
     "de lunes a sábado hasta las 12:00 del mediodía."
+)
+OPERATING_DATE_MSG = (
+    "La fecha seleccionada no es válida: no se permiten reservas ni préstamos "
+    "en domingo ni sábado a partir de las 12:00."
 )
 
 
@@ -1295,7 +1309,10 @@ def create_reservation():
         fecha_fin = parse_datetime(data["fecha_fin"], "fecha_fin")
     except ValueError as exc:
         return error(str(exc))
-    
+
+    if not is_valid_operating_date(fecha_inicio):
+        return error(OPERATING_DATE_MSG, 400)
+
     rule_error = check_reservation_rules(fecha_inicio, fecha_fin)
     if rule_error:
         return error(rule_error)
@@ -1590,7 +1607,10 @@ def request_loan():
         fecha_limite = parse_datetime(data["fecha_limite"], "fecha_limite")
     except ValueError as exc:
         return error(str(exc))
-        
+
+    if not is_valid_operating_date(fecha_salida):
+        return error(OPERATING_DATE_MSG, 400)
+
     if fecha_limite <= fecha_salida:
         return error("La fecha y hora límite debe ser posterior a la de salida", 400)
 
