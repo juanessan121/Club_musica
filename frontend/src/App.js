@@ -328,6 +328,7 @@ export default function App() {
   const [prestamos, setPrestamos] = useState([]);
 
   const [editingUser, setEditingUser] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [reservaForm, setReservaForm] = useState(emptyReserva);
   const [prestamoForm, setPrestamoForm] = useState(emptyPrestamo);
@@ -440,6 +441,8 @@ export default function App() {
 
   async function submitReserva(event) {
     event.preventDefault();
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     try {
       const inicio = new Date(reservaForm.fecha_inicio);
       const fin = new Date(reservaForm.fecha_fin);
@@ -477,6 +480,8 @@ export default function App() {
       await loadData();
     } catch (err) {
       setMessage({ text: err.message, type: 'error' });
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -492,9 +497,14 @@ export default function App() {
 
   async function submitPrestamo(event) {
     event.preventDefault();
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     try {
       if (!isValidOperatingDate(prestamoForm.fecha_salida)) {
         throw new Error(OPERATING_DATE_ERROR);
+      }
+      if (!isValidOperatingDate(prestamoForm.fecha_limite)) {
+        throw new Error('La fecha límite de devolución no puede ser domingo ni sábado a partir de las 12:00.');
       }
       await api('/prestamos/solicitar', {
         method: 'POST',
@@ -505,6 +515,8 @@ export default function App() {
       await loadData();
     } catch (err) {
       setMessage({ text: err.message, type: 'error' });
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -676,6 +688,7 @@ export default function App() {
             setForm={setReservaForm}
             onSubmit={submitReserva}
             onCancel={cancelReserva}
+            isSubmitting={isSubmitting}
           />
         )}
         {activeView === 'prestamos' && (
@@ -688,6 +701,7 @@ export default function App() {
             setForm={setPrestamoForm}
             onSubmit={submitPrestamo}
             onReturn={devolverPrestamo}
+            isSubmitting={isSubmitting}
           />
         )}
         {activeView === 'inventario' && (
@@ -855,7 +869,7 @@ function Dashboard({ isAdmin, stats, reservas, prestamos, inventario, currentUse
   );
 }
 
-function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents, currentUser, form, setForm, onSubmit, onCancel }) {
+function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents, currentUser, form, setForm, onSubmit, onCancel, isSubmitting }) {
   const [data, setData] = useState([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -955,7 +969,9 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents
                 <input type="checkbox" checked={form.terminos_aceptados} onChange={(e) => setForm({ ...form, terminos_aceptados: e.target.checked })} />
                 Acepto las condiciones de uso de sala.
               </label>
-              <button className="button primary" type="submit" disabled={!opHours || formHasErrors}>Confirmar reserva</button>
+              <button className="button primary" type="submit" disabled={!opHours || formHasErrors || isSubmitting}>
+                {isSubmitting ? 'Guardando...' : 'Confirmar reserva'}
+              </button>
               </fieldset>
             </form>
           </section>
@@ -1026,7 +1042,7 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents
   );
 }
 
-function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, onSubmit, onReturn }) {
+function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, onSubmit, onReturn, isSubmitting }) {
   const [data, setData] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -1045,7 +1061,9 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
     else if (salida && salida < now)
       errors.fecha_salida = 'La fecha de salida no puede estar en el pasado.';
 
-    if (salida && limite && limite <= salida)
+    if (form.fecha_limite && !isValidOperatingDate(form.fecha_limite))
+      errors.fecha_limite = 'La fecha límite no puede ser domingo ni sábado a partir de las 12:00.';
+    else if (salida && limite && limite <= salida)
       errors.fecha_limite = 'La fecha límite debe ser posterior a la de salida.';
 
     return errors;
@@ -1120,7 +1138,9 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
               <div style={OPERATING_DATE_WARNING_STYLE}>⛔ {prestamoErrors.fecha_limite}</div>
             )}
           </Field>
-          <button className="button primary" type="submit" disabled={!opHours || prestamoHasErrors}>Registrar préstamo</button>
+          <button className="button primary" type="submit" disabled={!opHours || prestamoHasErrors || isSubmitting}>
+            {isSubmitting ? 'Guardando...' : 'Registrar préstamo'}
+          </button>
           </fieldset>
         </form>
       </section>

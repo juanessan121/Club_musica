@@ -1611,6 +1611,12 @@ def request_loan():
     if not is_valid_operating_date(fecha_salida):
         return error(OPERATING_DATE_MSG, 400)
 
+    if not is_valid_operating_date(fecha_limite):
+        return error(
+            "La fecha límite de devolución no puede ser domingo ni sábado a partir de las 12:00.",
+            400,
+        )
+
     if fecha_limite <= fecha_salida:
         return error("La fecha y hora límite debe ser posterior a la de salida", 400)
 
