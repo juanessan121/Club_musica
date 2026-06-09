@@ -862,6 +862,31 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents
   const [search, setSearch] = useState('');
   const opHours = isWithinOperatingHours();
 
+  // Validación en tiempo real — se recalcula con cada cambio del formulario
+  const formErrors = (() => {
+    const errors = {};
+    const now = new Date();
+    const inicio = form.fecha_inicio ? new Date(form.fecha_inicio) : null;
+    const fin = form.fecha_fin ? new Date(form.fecha_fin) : null;
+
+    if (form.fecha_inicio && !isValidOperatingDate(form.fecha_inicio))
+      errors.fecha_inicio = OPERATING_DATE_ERROR;
+    else if (inicio && inicio < now)
+      errors.fecha_inicio = 'La fecha de inicio no puede estar en el pasado.';
+
+    if (inicio && fin) {
+      if (fin <= inicio)
+        errors.fecha_fin = 'La hora de fin debe ser posterior al inicio.';
+      else if (inicio.toDateString() !== fin.toDateString())
+        errors.fecha_fin = 'La reserva debe iniciar y terminar el mismo día.';
+      else if ((fin - inicio) > 4 * 3600 * 1000)
+        errors.fecha_fin = 'La reserva no puede durar más de 4 horas.';
+    }
+
+    return errors;
+  })();
+  const formHasErrors = Object.keys(formErrors).length > 0;
+
   useEffect(() => {
     const timer = setTimeout(() => {
       api(`/reservas?page=${page}&limit=5&search=${search}`).then(res => {
@@ -910,24 +935,27 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents
                   min={new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
                   required
                 />
-                {!isValidOperatingDate(form.fecha_inicio) && (
-                  <div style={OPERATING_DATE_WARNING_STYLE}>⛔ {OPERATING_DATE_ERROR}</div>
+                {formErrors.fecha_inicio && (
+                  <div style={OPERATING_DATE_WARNING_STYLE}>⛔ {formErrors.fecha_inicio}</div>
                 )}
               </Field>
               <Field label="Fin">
-                <TextInput 
-                  type="datetime-local" 
-                  value={form.fecha_fin} 
-                  onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })} 
+                <TextInput
+                  type="datetime-local"
+                  value={form.fecha_fin}
+                  onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })}
                   min={form.fecha_inicio || new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
-                  required 
+                  required
                 />
+                {formErrors.fecha_fin && (
+                  <div style={OPERATING_DATE_WARNING_STYLE}>⛔ {formErrors.fecha_fin}</div>
+                )}
               </Field>
               <label className="checkline">
                 <input type="checkbox" checked={form.terminos_aceptados} onChange={(e) => setForm({ ...form, terminos_aceptados: e.target.checked })} />
                 Acepto las condiciones de uso de sala.
               </label>
-              <button className="button primary" type="submit" disabled={!opHours}>Confirmar reserva</button>
+              <button className="button primary" type="submit" disabled={!opHours || formHasErrors}>Confirmar reserva</button>
               </fieldset>
             </form>
           </section>
@@ -1006,6 +1034,24 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
   const [selectedPrestamo, setSelectedPrestamo] = useState(null);
   const opHours = isWithinOperatingHours();
 
+  const prestamoErrors = (() => {
+    const errors = {};
+    const now = new Date();
+    const salida = form.fecha_salida ? new Date(form.fecha_salida) : null;
+    const limite = form.fecha_limite ? new Date(form.fecha_limite) : null;
+
+    if (form.fecha_salida && !isValidOperatingDate(form.fecha_salida))
+      errors.fecha_salida = OPERATING_DATE_ERROR;
+    else if (salida && salida < now)
+      errors.fecha_salida = 'La fecha de salida no puede estar en el pasado.';
+
+    if (salida && limite && limite <= salida)
+      errors.fecha_limite = 'La fecha límite debe ser posterior a la de salida.';
+
+    return errors;
+  })();
+  const prestamoHasErrors = Object.keys(prestamoErrors).length > 0;
+
   useEffect(() => {
     const timer = setTimeout(() => {
       api(`/prestamos?page=${page}&limit=5&search=${search}`).then(res => {
@@ -1058,8 +1104,8 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
               min={new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
               required
             />
-            {!isValidOperatingDate(form.fecha_salida) && (
-              <div style={OPERATING_DATE_WARNING_STYLE}>⛔ {OPERATING_DATE_ERROR}</div>
+            {prestamoErrors.fecha_salida && (
+              <div style={OPERATING_DATE_WARNING_STYLE}>⛔ {prestamoErrors.fecha_salida}</div>
             )}
           </Field>
           <Field label="Fecha y hora límite de devolución">
@@ -1070,8 +1116,11 @@ function PrestamosView({ api, isAdmin, usersList, instrumentos, form, setForm, o
               min={form.fecha_salida || new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
               required
             />
+            {prestamoErrors.fecha_limite && (
+              <div style={OPERATING_DATE_WARNING_STYLE}>⛔ {prestamoErrors.fecha_limite}</div>
+            )}
           </Field>
-          <button className="button primary" type="submit" disabled={!opHours}>Registrar préstamo</button>
+          <button className="button primary" type="submit" disabled={!opHours || prestamoHasErrors}>Registrar préstamo</button>
           </fieldset>
         </form>
       </section>
