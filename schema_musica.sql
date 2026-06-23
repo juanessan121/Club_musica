@@ -187,10 +187,11 @@ CREATE TABLE PRESTAMO (
     id INT PRIMARY KEY AUTO_INCREMENT,
     socio_id INT NOT NULL,
     instrumento_id INT NOT NULL,
-    fecha_salida DATE NOT NULL DEFAULT (CURRENT_DATE),
-    fecha_limite DATE NOT NULL,
-    fecha_devolucion DATE,
+    fecha_salida DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_limite DATETIME NOT NULL,
+    fecha_devolucion DATETIME,
     estado VARCHAR(30) NOT NULL DEFAULT 'ACTIVO' CHECK (estado IN ('ACTIVO', 'DEVUELTO', 'VENCIDO')),
+    motivo VARCHAR(200) NULL,
     observaciones TEXT,
     eliminado_en DATETIME NULL,
     creado_por VARCHAR(50) NOT NULL DEFAULT 'SYSTEM',
@@ -355,7 +356,12 @@ INSERT INTO TIPO_INSTRUMENTO (nombre, descripcion) VALUES
     ('Amplificador', 'Amplificación para bajo, guitarra o voz'),
     ('Teclado', 'Pianos y sintetizadores'),
     ('Micrófono', 'Micrófonos dinámicos y de condensador'),
-    ('Bajo', 'Bajos eléctricos y acústicos');
+    ('Bajo', 'Bajos eléctricos y acústicos'),
+    ('Guitarra Acústica', 'Guitarras acústicas y electroacústicas'),
+    ('Percusión Menor', 'Cajones, congas, bongos y percusión menor'),
+    ('Instrumento de Viento', 'Saxofones, flautas, trompetas y similares'),
+    ('Efectos y Procesadores', 'Pedaleras, procesadores y multi-efectos'),
+    ('Sistema de Audio', 'Interfaces, consolas y sistemas PA');
 
 INSERT INTO SOCIO (nombre, email, telefono, password_hash, password_salt, nivel_habilidad, rol, estado) VALUES
     ('Juan Sandoval', 'juan.sandoval@pucesa.edu.ec', '+593991234567', '', '', 'AVANZADO', 'ADMIN', 'ACTIVO'),
@@ -384,11 +390,60 @@ INSERT INTO INSTRUMENTO (
     nombre, tipo_instrumento_id, marca, modelo, numero_serie,
     fecha_adquisicion, estado, ubicacion
 ) VALUES
+    -- Guitarras Eléctricas (tipo 1)
     ('Fender Stratocaster', 1, 'Fender', 'Player Stratocaster', 'FN-123456', '2025-02-10', 'DISPONIBLE', 'Bodega principal'),
+    ('Gibson Les Paul Standard', 1, 'Gibson', 'Les Paul Standard', 'GB-111111', '2024-09-15', 'DISPONIBLE', 'Bodega principal'),
+    ('Ibanez RG550', 1, 'Ibanez', 'RG550', 'IB-222222', '2025-01-20', 'DISPONIBLE', 'Bodega principal'),
+    ('ESP LTD EC-1000', 1, 'ESP', 'EC-1000', 'ES-333333', '2024-07-05', 'DISPONIBLE', 'Bodega secundaria'),
+    ('Squier Classic Vibe 50s', 1, 'Squier', 'Classic Vibe 50s', 'SQ-444444', '2025-03-12', 'DISPONIBLE', 'Bodega secundaria'),
+    -- Baterías (tipo 2)
     ('Yamaha Rydeen Kit', 2, 'Yamaha', 'Rydeen', 'YM-789012', '2024-11-15', 'DISPONIBLE', 'Sala de Ensayo Principal'),
+    ('Pearl Export Kit', 2, 'Pearl', 'Export EXX', 'PE-555555', '2025-05-08', 'DISPONIBLE', 'Sala de Ensayo Principal'),
+    ('Tama Imperialstar', 2, 'Tama', 'Imperialstar', 'TM-666666', '2024-12-20', 'DISPONIBLE', 'Sala Acústica'),
+    -- Amplificadores (tipo 3)
     ('Ampeg Rocket Bass', 3, 'Ampeg', 'RB-110', 'AM-224466', '2025-04-20', 'DISPONIBLE', 'Bodega principal'),
+    ('Marshall DSL40CR', 3, 'Marshall', 'DSL40CR', 'MR-777777', '2025-01-10', 'DISPONIBLE', 'Sala de Ensayo Principal'),
+    ('Fender Blues Junior IV', 3, 'Fender', 'Blues Junior IV', 'FD-888888', '2024-10-30', 'DISPONIBLE', 'Bodega principal'),
+    ('Blackstar HT5R MkII', 3, 'Blackstar', 'HT5R MkII', 'BL-999999', '2025-02-28', 'DISPONIBLE', 'Bodega secundaria'),
+    ('Boss Katana 50 MkII', 3, 'Boss', 'Katana-50 MkII', 'BS-101010', '2025-06-01', 'DISPONIBLE', 'Sala de Ensayo Principal'),
+    -- Teclados (tipo 4)
     ('Korg B2', 4, 'Korg', 'B2', 'KG-334455', '2024-08-08', 'MANTENIMIENTO', 'Estudio de Grabación'),
-    ('Shure SM58', 5, 'Shure', 'SM58', 'SH-556677', '2025-09-01', 'PRESTADO', 'Cabina de audio');
+    ('Roland FP-30X', 4, 'Roland', 'FP-30X', 'RL-202020', '2025-03-15', 'DISPONIBLE', 'Estudio de Grabación'),
+    ('Yamaha P-145', 4, 'Yamaha', 'P-145', 'YM-303030', '2024-11-25', 'DISPONIBLE', 'Sala Acústica'),
+    ('Casio CT-X700', 4, 'Casio', 'CT-X700', 'CS-404040', '2025-04-05', 'DISPONIBLE', 'Bodega principal'),
+    ('Nord Stage 3', 4, 'Nord', 'Stage 3 Compact', 'ND-505050', '2024-06-18', 'DISPONIBLE', 'Estudio de Grabación'),
+    -- Micrófonos (tipo 5)
+    ('Shure SM58', 5, 'Shure', 'SM58', 'SH-556677', '2025-09-01', 'DISPONIBLE', 'Cabina de audio'),
+    ('AKG C214', 5, 'AKG', 'C214', 'AK-505050', '2025-01-08', 'DISPONIBLE', 'Estudio de Grabación'),
+    ('Audio-Technica AT2020', 5, 'Audio-Technica', 'AT2020', 'AT-606060', '2024-12-15', 'DISPONIBLE', 'Estudio de Grabación'),
+    ('Sennheiser e835', 5, 'Sennheiser', 'e835', 'SE-707070', '2025-02-10', 'DISPONIBLE', 'Cabina de audio'),
+    ('Shure SM7B', 5, 'Shure', 'SM7B', 'SH-808080', '2024-09-22', 'DISPONIBLE', 'Estudio de Grabación'),
+    ('Rode NT1', 5, 'Rode', 'NT1', 'RD-909090', '2025-05-15', 'DISPONIBLE', 'Estudio de Grabación'),
+    -- Bajos (tipo 6)
+    ('Fender Jazz Bass', 6, 'Fender', 'Player Jazz Bass', 'FJ-111213', '2025-03-28', 'DISPONIBLE', 'Bodega principal'),
+    ('Gibson SG Bass', 6, 'Gibson', 'SG Standard Bass', 'GI-141516', '2024-10-05', 'DISPONIBLE', 'Bodega principal'),
+    ('Music Man StingRay', 6, 'Music Man', 'StingRay 4', 'MM-171819', '2025-01-30', 'DISPONIBLE', 'Bodega principal'),
+    -- Guitarras Acústicas (tipo 7)
+    ('Yamaha FG800', 7, 'Yamaha', 'FG800', 'YA-202122', '2025-04-12', 'DISPONIBLE', 'Bodega principal'),
+    ('Taylor Academy 12', 7, 'Taylor', 'Academy 12', 'TA-232425', '2024-08-20', 'DISPONIBLE', 'Sala Acústica'),
+    ('Fender FA-135CE', 7, 'Fender', 'FA-135CE', 'FA-262728', '2025-02-14', 'DISPONIBLE', 'Bodega secundaria'),
+    ('Takamine GN93CE', 7, 'Takamine', 'GN93CE', 'TK-293031', '2024-11-08', 'DISPONIBLE', 'Bodega principal'),
+    -- Percusión Menor (tipo 8)
+    ('Cajón Flamenco LP', 8, 'Latin Percussion', 'LP1180', 'LP-323334', '2025-03-05', 'DISPONIBLE', 'Sala de Ensayo Principal'),
+    ('Set Congas Meinl 10/11', 8, 'Meinl', 'Headliner HC10BC-11BC', 'ME-353637', '2024-10-18', 'DISPONIBLE', 'Sala de Ensayo Principal'),
+    ('Bongos Pearl', 8, 'Pearl', 'PB-512', 'PE-383940', '2025-01-22', 'DISPONIBLE', 'Bodega principal'),
+    -- Instrumentos de Viento (tipo 9)
+    ('Saxofón Alto Yamaha', 9, 'Yamaha', 'YAS-280', 'YS-414243', '2024-09-10', 'DISPONIBLE', 'Bodega principal'),
+    ('Trompeta Bach TR300', 9, 'Bach', 'TR300H', 'BC-444546', '2025-04-22', 'DISPONIBLE', 'Bodega principal'),
+    ('Flauta Traversa Gemeinhardt', 9, 'Gemeinhardt', '2SP', 'GE-474849', '2024-07-30', 'DISPONIBLE', 'Bodega secundaria'),
+    -- Efectos y Procesadores (tipo 10)
+    ('Boss GT-1000 Multi-FX', 10, 'Boss', 'GT-1000', 'BG-505152', '2025-02-05', 'DISPONIBLE', 'Bodega principal'),
+    ('TC-Helicon VoiceLive Play', 10, 'TC-Helicon', 'VoiceLive Play', 'TC-535455', '2024-11-12', 'DISPONIBLE', 'Estudio de Grabación'),
+    ('Line 6 HX Stomp', 10, 'Line 6', 'HX Stomp', 'L6-565758', '2025-03-20', 'DISPONIBLE', 'Bodega principal'),
+    -- Sistemas de Audio (tipo 11)
+    ('Interfaz Focusrite Scarlett 4i4', 11, 'Focusrite', 'Scarlett 4i4 3rd Gen', 'FC-596061', '2025-01-15', 'DISPONIBLE', 'Estudio de Grabación'),
+    ('Mezcladora Behringer X32', 11, 'Behringer', 'X32 Compact', 'BH-626364', '2024-08-25', 'DISPONIBLE', 'Sala de Ensayo Principal'),
+    ('Sistema PA QSC K12.2', 11, 'QSC', 'K12.2', 'QS-656667', '2025-05-10', 'DISPONIBLE', 'Bodega principal');
 
 INSERT INTO INSTRUMENTO_REQUERIDO (cancion_id, tipo_instrumento_id, especificaciones) VALUES
     (1, 1, 'Guitarra líder con distorsión moderada'),
@@ -412,12 +467,16 @@ INSERT INTO SETLIST (participacion_id, cancion_id, orden, notas) VALUES
 INSERT INTO RESERVA (
     socio_id, sala_id, fecha_inicio, fecha_fin, estado, observaciones, creado_por, modificado_por
 ) VALUES
-    (2, 1, '2026-05-20 15:00:00', '2026-05-20 17:00:00', 'CONFIRMADA', 'Ensayo de bajo y batería', 'SEED', 'SEED'),
-    (3, 2, '2026-05-21 10:00:00', '2026-05-21 12:00:00', 'CONFIRMADA', 'Grabación demo', 'SEED', 'SEED'),
-    (4, 3, '2026-05-22 14:00:00', '2026-05-22 15:30:00', 'REPROGRAMADA', 'Clase práctica', 'SEED', 'SEED');
+    (2, 1, DATE_ADD(CURDATE(), INTERVAL 2 DAY) + INTERVAL 15 HOUR, DATE_ADD(CURDATE(), INTERVAL 2 DAY) + INTERVAL 17 HOUR, 'CONFIRMADA', 'Ensayo de bajo y batería', 'SEED', 'SEED'),
+    (3, 2, DATE_ADD(CURDATE(), INTERVAL 4 DAY) + INTERVAL 10 HOUR, DATE_ADD(CURDATE(), INTERVAL 4 DAY) + INTERVAL 12 HOUR, 'CONFIRMADA', 'Grabación demo', 'SEED', 'SEED'),
+    (1, 3, DATE_ADD(CURDATE(), INTERVAL 6 DAY) + INTERVAL 14 HOUR, DATE_ADD(CURDATE(), INTERVAL 6 DAY) + INTERVAL 16 HOUR, 'CONFIRMADA', 'Ensayo general banda', 'SEED', 'SEED'),
+    (4, 1, DATE_ADD(CURDATE(), INTERVAL 7 DAY) + INTERVAL 9 HOUR, DATE_ADD(CURDATE(), INTERVAL 7 DAY) + INTERVAL 10 HOUR + INTERVAL 30 MINUTE, 'CONFIRMADA', 'Clase práctica de piano', 'SEED', 'SEED');
+
+-- Asegurar consistencia: instrumento prestado tiene estado PRESTADO
+UPDATE INSTRUMENTO SET estado = 'PRESTADO' WHERE numero_serie = 'SQ-444444';
 
 INSERT INTO PRESTAMO (
     socio_id, instrumento_id, fecha_salida, fecha_limite, estado,
     observaciones, creado_por, modificado_por
 ) VALUES
-    (3, 5, '2026-05-18', '2026-05-25', 'ACTIVO', 'Festival Cultural PUCE Ambato | Garantía: Cédula de Identidad', 'SEED', 'SEED');
+    (3, 5, NOW() - INTERVAL 2 DAY, NOW() + INTERVAL 14 DAY, 'ACTIVO', 'Festival Cultural PUCE Ambato | Garantía: Cédula de Identidad', 'SEED', 'SEED');

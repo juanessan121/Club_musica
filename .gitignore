@@ -57,3 +57,10 @@ build/
 .env.production.local
 
 .wwebjs_auth/
+.wwebjs_cache/
+whatsapp-bridge/.wwebjs_auth/
+whatsapp-bridge/.wwebjs_cache/
+
+# Scripts de parche temporales
+patch*.py
+clean_patch.py
