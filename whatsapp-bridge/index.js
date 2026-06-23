@@ -10,22 +10,27 @@ const PORT = process.env.PORT || 3002;
 const fs = require('fs');
 const path = require('path');
 
-// Clean up any stale Chromium lock files before starting
-const authDir = path.join(__dirname, '.wwebjs_auth');
-if (fs.existsSync(authDir)) {
-    try {
-        const dirs = fs.readdirSync(authDir);
-        for (const dir of dirs) {
-            const lockFile = path.join(authDir, dir, 'SingletonLock');
-            if (fs.existsSync(lockFile)) {
-                fs.unlinkSync(lockFile);
-                console.log('Removed stale SingletonLock from', lockFile);
+// Limpia recursivamente todos los archivos de bloqueo de Chromium
+function cleanChromiumLocks() {
+    const authDir = path.join(__dirname, '.wwebjs_auth');
+    if (!fs.existsSync(authDir)) return;
+    const lockNames = new Set(['SingletonLock', 'SingletonSocket', 'SingletonCookie']);
+    function sweep(dir) {
+        try {
+            for (const item of fs.readdirSync(dir)) {
+                const full = path.join(dir, item);
+                if (lockNames.has(item)) {
+                    fs.unlinkSync(full);
+                    console.log('[WA] Removed stale lock:', full);
+                } else {
+                    try { if (fs.statSync(full).isDirectory()) sweep(full); } catch (_) {}
+                }
             }
-        }
-    } catch (err) {
-        console.error('Error cleaning locks:', err);
+        } catch (_) {}
     }
+    sweep(authDir);
 }
+cleanChromiumLocks();
 
 // Iniciar cliente de WhatsApp con soporte para puppeteer en docker
 const client = new Client({
@@ -33,13 +38,15 @@ const client = new Client({
     puppeteer: {
         executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser',
         args: [
-            '--no-sandbox', 
-            '--disable-setuid-sandbox', 
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
-            '--disable-gpu'
+            '--disable-gpu',
+            '--disable-extensions',
+            '--disable-software-rasterizer'
         ]
     }
 });
@@ -68,13 +75,14 @@ client.on('auth_failure', msg => {
 client.on('disconnected', (reason) => {
     console.warn('WhatsApp Client disconnected:', reason);
     isReady = false;
-    // Reintentar inicialización tras 10 segundos
     setTimeout(() => {
         console.log('Intentando reconectar WhatsApp...');
+        cleanChromiumLocks();
         client.initialize();
     }, 10000);
 });
 
+cleanChromiumLocks();
 client.initialize();
 
 // Endpoint para enviar mensajes
