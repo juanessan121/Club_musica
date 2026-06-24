@@ -18,6 +18,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 import pymysql
+from dbutils.pooled_db import PooledDB
 import requests
 import jwt
 from flask import Flask, jsonify, request, Response
@@ -139,15 +140,23 @@ def require_admin(f):
     return decorated
 
 
+_db_pool = PooledDB(
+    creator=pymysql,
+    mincached=0,
+    maxcached=5,
+    maxconnections=10,
+    blocking=True,
+    ping=2,
+    host=DB_HOST,
+    user=DB_USER,
+    password=DB_PASSWORD,
+    database=DB_NAME,
+    cursorclass=pymysql.cursors.DictCursor,
+    autocommit=False,
+)
+
 def get_db_connection():
-    return pymysql.connect(
-        host=DB_HOST,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        database=DB_NAME,
-        cursorclass=pymysql.cursors.DictCursor,
-        autocommit=False,
-    )
+    return _db_pool.connection()
 
 
 def ok(data=None, status=200):
