@@ -490,7 +490,10 @@ export default function App() {
   const [salaForm, setSalaForm] = useState(emptySala);
 
   const visibleNav = useMemo(() => navItems.filter((item) => !item.adminOnly || isAdmin), [isAdmin]);
-  const availableInstruments = inventario.filter((item) => item.disponible && item.estado === 'DISPONIBLE');
+  const availableInstruments = useMemo(
+    () => inventario.filter((item) => item.disponible && item.estado === 'DISPONIBLE'),
+    [inventario]
+  );
 
   async function api(path, options = {}) {
     const token = localStorage.getItem('token');
@@ -536,6 +539,41 @@ export default function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function refreshCalendarAndReservas() {
+    await Promise.all([
+      api('/reservas/calendario').then(setCalendarEvents),
+      isAdmin ? api('/reservas').then(setReservas) : api(`/reservas/${currentUser.id}`).then(setReservas),
+      api('/dashboard/stats').then(setStats),
+    ]);
+  }
+
+  async function refreshPrestamosAndInventario() {
+    await Promise.all([
+      api('/prestamos').then(setPrestamos),
+      api('/inventario').then(setInventario),
+      api('/dashboard/stats').then(setStats),
+    ]);
+  }
+
+  async function refreshInventario() {
+    await Promise.all([
+      api('/inventario').then(setInventario),
+      api('/dashboard/stats').then(setStats),
+    ]);
+  }
+
+  async function refreshUsers() {
+    await Promise.all([
+      api('/users').then(setUsersList),
+      api('/dashboard/stats').then(setStats),
+    ]);
+  }
+
+  async function refreshSalas() {
+    const data = await api('/salas');
+    setSalas(data);
   }
 
   useEffect(() => {
@@ -639,7 +677,7 @@ export default function App() {
       });
       setMessage({ text: 'Reserva registrada correctamente.', type: 'success' });
       setReservaForm({ ...emptyReserva, user_id: isAdmin ? '' : currentUser.id });
-      await loadData();
+      await refreshCalendarAndReservas();
     } catch (err) {
       setMessage({ text: err.message, type: 'error' });
     } finally {
@@ -651,7 +689,7 @@ export default function App() {
     try {
       await api(`/reservas/${id}`, { method: 'DELETE' });
       setMessage({ text: 'Reserva cancelada.', type: 'success' });
-      await loadData();
+      await refreshCalendarAndReservas();
     } catch (err) {
       setMessage({ text: err.message, type: 'error' });
     }
@@ -674,7 +712,7 @@ export default function App() {
       });
       setMessage({ text: 'Préstamo registrado correctamente.', type: 'success' });
       setPrestamoForm({ ...emptyPrestamo, user_id: isAdmin ? '' : currentUser.id });
-      await loadData();
+      await refreshPrestamosAndInventario();
     } catch (err) {
       setMessage({ text: err.message, type: 'error' });
     } finally {
@@ -687,7 +725,7 @@ export default function App() {
     try {
       await api(`/prestamos/${id}/devolver`, { method: 'POST', body: JSON.stringify({ estado_instrumento: 'DISPONIBLE' }) });
       setMessage({ text: 'Instrumento devuelto correctamente.', type: 'success' });
-      await loadData();
+      await refreshPrestamosAndInventario();
     } catch (err) {
       setMessage({ text: err.message, type: 'error' });
     }
@@ -699,7 +737,7 @@ export default function App() {
       await api('/users', { method: 'POST', body: JSON.stringify(socioForm) });
       setSocioForm(emptySocio);
       setMessage({ text: 'Socio creado correctamente.', type: 'success' });
-      await loadData();
+      await refreshUsers();
     } catch (err) {
       setMessage({ text: err.message, type: 'error' });
     }
@@ -711,7 +749,7 @@ export default function App() {
       await api('/inventario', { method: 'POST', body: JSON.stringify(instrumentoForm) });
       setInstrumentoForm(emptyInstrumento);
       setMessage({ text: 'Instrumento creado correctamente.', type: 'success' });
-      await loadData();
+      await refreshInventario();
     } catch (err) {
       setMessage({ text: err.message, type: 'error' });
     }
@@ -723,7 +761,7 @@ export default function App() {
       await api('/salas', { method: 'POST', body: JSON.stringify(salaForm) });
       setSalaForm(emptySala);
       setMessage({ text: 'Sala creada correctamente.', type: 'success' });
-      await loadData();
+      await refreshSalas();
     } catch (err) {
       setMessage({ text: err.message, type: 'error' });
     }
@@ -734,7 +772,7 @@ export default function App() {
       await api(`/users/${userId}`, { method: 'PUT', body: JSON.stringify(updatedData) });
       setEditingUser(null);
       setMessage({ text: 'Socio actualizado correctamente.', type: 'success' });
-      await loadData();
+      await api('/users').then(setUsersList);
     } catch (err) {
       setMessage({ text: err.message, type: 'error' });
     }
@@ -1349,8 +1387,12 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents
   const [search, setSearch] = useState('');
   const opHours = isWithinOperatingHours();
 
-  // Validación en tiempo real — se recalcula con cada cambio del formulario
-  const formErrors = (() => {
+  const parsedCalendarEvents = useMemo(
+    () => (calendarEvents || []).map(e => ({ ...e, startDate: new Date(e.start), endDate: new Date(e.end) })),
+    [calendarEvents]
+  );
+
+  const formErrors = useMemo(() => {
     const errors = {};
     const now = new Date();
     const inicio = form.fecha_inicio ? new Date(form.fecha_inicio) : null;
@@ -1370,19 +1412,16 @@ function ReservasView({ api, isAdmin, usersList, salas, reservas, calendarEvents
         errors.fecha_fin = 'La reserva no puede durar más de 4 horas.';
     }
 
-    // Detección de conflicto en tiempo real — compara con los eventos del calendario
     if (form.sala_id && inicio && fin && !errors.fecha_inicio && !errors.fecha_fin) {
-      const conflict = (calendarEvents || []).some(e => {
+      const conflict = parsedCalendarEvents.some(e => {
         if (String(e.sala_id) !== String(form.sala_id)) return false;
-        const eStart = new Date(e.start);
-        const eEnd = new Date(e.end);
-        return inicio < eEnd && fin > eStart;
+        return inicio < e.endDate && fin > e.startDate;
       });
       if (conflict) errors.conflicto = 'La sala ya está reservada en ese horario.';
     }
 
     return errors;
-  })();
+  }, [form.fecha_inicio, form.fecha_fin, form.sala_id, parsedCalendarEvents]);
   const formHasErrors = Object.keys(formErrors).length > 0;
 
   // Filtra los eventos del calendario según la sala y (en admin) el socio seleccionado en el formulario
