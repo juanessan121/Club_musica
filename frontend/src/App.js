@@ -464,7 +464,8 @@ export default function App() {
     const token = localStorage.getItem('token');
     return !isTokenExpired(token) && localStorage.getItem('isAdmin') === 'true';
   });
-  const [activeView, setActiveView] = useState('dashboard');
+  const [activeView, setActiveView] = useState(() => localStorage.getItem('activeView') || 'dashboard');
+  const setActiveViewPersist = (view) => { setActiveView(view); localStorage.setItem('activeView', view); };
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
   const [login, setLogin] = useState({ email: '', password: '' });
@@ -597,6 +598,7 @@ export default function App() {
     localStorage.removeItem('currentUser');
     localStorage.removeItem('isAdmin');
     localStorage.removeItem('token');
+    localStorage.removeItem('activeView');
   }
 
   async function submitReserva(event) {
@@ -801,7 +803,7 @@ export default function App() {
           {visibleNav.map((item) => {
             const Icon = item.icon;
             return (
-              <button key={item.id} className={`nav-button ${activeView === item.id ? 'active' : ''}`} onClick={() => setActiveView(item.id)}>
+              <button key={item.id} className={`nav-button ${activeView === item.id ? 'active' : ''}`} onClick={() => setActiveViewPersist(item.id)}>
                 <Icon size={18} />
                 {item.label}
               </button>
@@ -830,7 +832,7 @@ export default function App() {
           <Dashboard isAdmin={isAdmin} stats={stats} reservas={reservas} prestamos={prestamos} inventario={inventario} currentUser={currentUser} salas={salas} usersList={usersList} />
         )}
         {activeView === 'calendario' && (
-          <CalendarioView events={calendarEvents} currentUser={currentUser} setActiveView={setActiveView} setForm={setReservaForm} />
+          <CalendarioView events={calendarEvents} currentUser={currentUser} setActiveView={setActiveViewPersist} setForm={setReservaForm} />
         )}
         {activeView === 'reservas' && (
           <ReservasView
@@ -931,7 +933,12 @@ function PerfilView({ api, currentUser, loadData, setCurrentUser }) {
         <form className="form" onSubmit={submitPerfil}>
           <Field label="Correo (No modificable)"><TextInput type="email" value={currentUser.email_institucional} disabled /></Field>
           <Field label="Nombre (No modificable)"><TextInput value={currentUser.nombre_completo} disabled /></Field>
-          <Field label="WhatsApp"><TextInput value={perfilForm.telefono_whatsapp} onChange={(e) => setPerfilForm({ ...perfilForm, telefono_whatsapp: e.target.value })} required /></Field>
+          <Field label="WhatsApp">
+            <TextInput value={perfilForm.telefono_whatsapp} onChange={(e) => setPerfilForm({ ...perfilForm, telefono_whatsapp: e.target.value })} placeholder="0991234567" maxLength={10} required />
+            {perfilForm.telefono_whatsapp && !/^\d{10}$/.test(perfilForm.telefono_whatsapp) && (
+              <div style={OPERATING_DATE_WARNING_STYLE}>⛔ Debe tener exactamente 10 dígitos (ej: 0991234567)</div>
+            )}
+          </Field>
           <Field label="Nivel">
             <SelectInput value={perfilForm.nivel_habilidad} onChange={(e) => setPerfilForm({ ...perfilForm, nivel_habilidad: e.target.value })}>
               <option value="PRINCIPIANTE">PRINCIPIANTE</option>
@@ -1892,7 +1899,12 @@ function SociosView({ api, form, setForm, onSubmit, setEditingUser }) {
         <form className="form" onSubmit={onSubmit}>
           <Field label="Nombre completo"><TextInput value={form.nombre_completo} onChange={(e) => setForm({ ...form, nombre_completo: e.target.value })} required /></Field>
           <Field label="Correo PUCE"><TextInput type="email" value={form.email_institucional} onChange={(e) => setForm({ ...form, email_institucional: e.target.value })} pattern=".*@pucesa\.edu\.ec$" required /></Field>
-          <Field label="WhatsApp"><TextInput value={form.telefono_whatsapp} onChange={(e) => setForm({ ...form, telefono_whatsapp: e.target.value })} required /></Field>
+          <Field label="WhatsApp">
+            <TextInput value={form.telefono_whatsapp} onChange={(e) => setForm({ ...form, telefono_whatsapp: e.target.value })} placeholder="0991234567" maxLength={10} required />
+            {form.telefono_whatsapp && !/^\d{10}$/.test(form.telefono_whatsapp) && (
+              <div style={OPERATING_DATE_WARNING_STYLE}>⛔ Debe tener exactamente 10 dígitos (ej: 0991234567)</div>
+            )}
+          </Field>
           <Field label="Nivel">
             <SelectInput value={form.nivel_habilidad} onChange={(e) => setForm({ ...form, nivel_habilidad: e.target.value })}>
               <option value="PRINCIPIANTE">PRINCIPIANTE</option>
@@ -2193,7 +2205,10 @@ function EditSocioModal({ socio, onClose, onSave }) {
             <TextInput value={form.nombre_completo} onChange={e => setForm({ ...form, nombre_completo: e.target.value })} required />
           </Field>
           <Field label="Teléfono WhatsApp">
-            <TextInput value={form.telefono_whatsapp} onChange={e => setForm({ ...form, telefono_whatsapp: e.target.value })} />
+            <TextInput value={form.telefono_whatsapp} onChange={e => setForm({ ...form, telefono_whatsapp: e.target.value })} placeholder="0991234567" maxLength={10} />
+            {form.telefono_whatsapp && !/^\d{10}$/.test(form.telefono_whatsapp) && (
+              <div style={OPERATING_DATE_WARNING_STYLE}>⛔ Debe tener exactamente 10 dígitos (ej: 0991234567)</div>
+            )}
           </Field>
           <Field label="Nivel de habilidad">
             <SelectInput value={form.nivel_habilidad} onChange={e => setForm({ ...form, nivel_habilidad: e.target.value })}>
