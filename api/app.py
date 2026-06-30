@@ -2,13 +2,21 @@ import base64
 import hashlib
 import hmac
 import html as _html
+import logging
 import os
 import re as _re
+import uuid
 from datetime import date, datetime, timedelta
 from functools import wraps
 import string
-import random
+import secrets
 import smtplib
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("club_musica")
 import io
 import threading
 import openpyxl
@@ -19,10 +27,12 @@ from email.mime.text import MIMEText
 
 import pymysql
 from dbutils.pooled_db import PooledDB
+from helpers import normalize_level, normalize_role, normalize_socio_estado, is_valid_operating_date, require_fields
 import requests
 import jwt
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
+from flask_talisman import Talisman
 
 try:
     import bcrypt
@@ -32,6 +42,38 @@ except ImportError:
 
 app = Flask(__name__)
 
+# ── Cookies de sesión seguras ────────────────────────────────────────────────
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Strict",
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=int(os.environ.get("JWT_EXPIRY_HOURS", "24"))),
+)
+
+# ── Flask-Talisman: HSTS, CSP, X-Frame-Options, Referrer-Policy ─────────────
+# force_https=False porque nginx ya hace la terminación TLS y el redirect HTTP→HTTPS.
+# Los headers HSTS llegan al browser igualmente porque nginx no los filtra.
+_CSP = {
+    "default-src": ["'self'"],
+    "script-src":  ["'self'", "'unsafe-inline'"],
+    "style-src":   ["'self'", "'unsafe-inline'"],
+    "img-src":     ["'self'", "data:", "https:"],
+    "font-src":    ["'self'", "data:"],
+    "connect-src": ["'self'", "wss:"],
+    "frame-ancestors": ["'none'"],
+}
+Talisman(
+    app,
+    force_https=False,
+    strict_transport_security=True,
+    strict_transport_security_max_age=63072000,
+    strict_transport_security_include_subdomains=True,
+    content_security_policy=_CSP,
+    referrer_policy="strict-origin-when-cross-origin",
+    frame_options="DENY",
+    x_content_type_options=True,
+)
+
 # ── Configuración de seguridad ───────────────────────────────────────────────
 ALLOWED_ORIGINS = os.environ.get(
     "CORS_ALLOWED_ORIGINS",
@@ -39,14 +81,26 @@ ALLOWED_ORIGINS = os.environ.get(
 ).split(",")
 CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
 
+def read_secret(env_var: str, secret_name: str | None = None, default: str = "") -> str:
+    """Lee un secreto desde /run/secrets/ (Docker Secrets) y cae en la variable de entorno.
+    Esto permite usar Docker Secrets en producción sin cambiar el código."""
+    if secret_name:
+        try:
+            with open(f"/run/secrets/{secret_name}") as _f:
+                return _f.read().strip()
+        except FileNotFoundError:
+            pass
+    return os.environ.get(env_var, default)
+
+
 DB_HOST     = os.environ.get("DB_HOST", "db-mariadb")
 DB_USER     = os.environ.get("DB_USER", "clubmusica")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "clubmusica_secret_2026")
+DB_PASSWORD = read_secret("DB_PASSWORD", "db_password")
 DB_NAME     = os.environ.get("DB_NAME", "club_musica")
 WHATSAPP_BRIDGE_URL = os.environ.get("WHATSAPP_BRIDGE_URL", "http://whatsapp-bridge:3002")
 DEFAULT_PASSWORD    = os.environ.get("DEFAULT_USER_PASSWORD", "Musica2026!")
 
-JWT_SECRET    = os.environ.get("JWT_SECRET", "super-secret-key-2026")
+JWT_SECRET    = read_secret("JWT_SECRET", "jwt_secret", "super-secret-key-2026")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_HOURS = int(os.environ.get("JWT_EXPIRY_HOURS", "24"))
 
@@ -60,20 +114,71 @@ SCHEMA_READY = False
 
 # Advertencia de seguridad si JWT_SECRET es débil
 if len(JWT_SECRET) < 32 or JWT_SECRET in ("super-secret-key-2026", "cambia-este-secreto-en-produccion"):
-    print("[SECURITY WARNING] JWT_SECRET is weak or default. Set a strong random secret (min 32 chars).")
+    logger.warning("[SECURITY WARNING] JWT_SECRET is weak or default. Set a strong random secret (min 32 chars).")
 
-# ── Blacklist de tokens revocados (logout) ───────────────────────────────────
-_revoked_tokens: set = set()
+# ── Blacklist de tokens revocados (logout) — persistida en BD ────────────────
+# Ya no usamos un set en RAM: los tokens revocados sobreviven reinicios y son
+# compartidos entre todos los workers de gunicorn.
 
-# ── Security headers en todas las respuestas ────────────────────────────────
+def _is_token_revoked(jti: str) -> bool:
+    """Devuelve True si el jti está en TOKEN_BLACKLIST y aún no ha expirado."""
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM TOKEN_BLACKLIST WHERE jti = %s AND expires_at > %s",
+                (jti, datetime.utcnow()),
+            )
+            return cursor.fetchone() is not None
+    except Exception:
+        logger.error("TOKEN_BLACKLIST lookup error", exc_info=True)
+        return False  # fail-open: no bloquear usuarios ante un fallo de BD
+    finally:
+        conn.close()
+
+
+def _revoke_token(jti: str, expires_at: datetime) -> None:
+    """Inserta un jti en TOKEN_BLACKLIST. INSERT IGNORE tolera duplicados."""
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT IGNORE INTO TOKEN_BLACKLIST (jti, expires_at) VALUES (%s, %s)",
+                (jti, expires_at),
+            )
+        conn.commit()
+    except Exception:
+        logger.error("TOKEN_BLACKLIST insert error", exc_info=True)
+    finally:
+        conn.close()
+
+
+def _cleanup_token_blacklist() -> None:
+    """Elimina entradas expiradas de TOKEN_BLACKLIST. Llamado por el scheduler."""
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM TOKEN_BLACKLIST WHERE expires_at < %s",
+                (datetime.utcnow(),),
+            )
+            deleted = cursor.rowcount
+        conn.commit()
+        if deleted:
+            logger.info("TOKEN_BLACKLIST cleanup: %d entradas expiradas eliminadas", deleted)
+    except Exception:
+        logger.error("TOKEN_BLACKLIST cleanup error", exc_info=True)
+    finally:
+        conn.close()
+
+# ── Security headers adicionales ────────────────────────────────────────────
+# Talisman ya inyecta HSTS, CSP, X-Frame-Options, X-Content-Type-Options y
+# Referrer-Policy. Solo necesitamos eliminar el header Server para no revelar
+# información del stack.
 @app.after_request
 def add_security_headers(response):
-    response.headers['X-Content-Type-Options']  = 'nosniff'
-    response.headers['X-Frame-Options']          = 'DENY'
-    response.headers['X-XSS-Protection']         = '1; mode=block'
-    response.headers['Referrer-Policy']           = 'strict-origin-when-cross-origin'
-    response.headers['Permissions-Policy']        = 'geolocation=(), microphone=(), camera=()'
-    response.headers.pop('Server', None)
+    response.headers.pop("Server", None)
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     return response
 
 def get_user_from_token():
@@ -81,12 +186,14 @@ def get_user_from_token():
     if not auth_header or not auth_header.startswith("Bearer "):
         return None
     token = auth_header.split(" ", 1)[1]
-    if token in _revoked_tokens:
-        return None
     try:
-        return jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.InvalidTokenError:
         return None
+    jti = payload.get("jti")
+    if jti and _is_token_revoked(jti):
+        return None
+    return payload
 
 def _verify_user_in_db(payload):
     """Verifica que el usuario del token existe, está activo y tiene el rol correcto en BD."""
@@ -103,7 +210,7 @@ def _verify_user_in_db(payload):
             row = cursor.fetchone()
         conn.close()
     except Exception as e:
-        print(f"[AUTH] _verify_user_in_db error: {e}")
+        logger.error("[AUTH] _verify_user_in_db error: %s", e)
         return None
     if not row or row["estado"] != "ACTIVO":
         return None
@@ -171,11 +278,13 @@ def parse_json():
     return request.get_json(silent=True) or {}
 
 
-def require_fields(data, fields):
-    missing = [field for field in fields if data.get(field) in (None, "")]
-    if missing:
-        return f"Campos requeridos: {', '.join(missing)}"
-    return None
+def _build_safe_set(updates, allowed_cols):
+    """Construye la cláusula SET de un UPDATE validando cada columna contra un allowlist.
+    Lanza ValueError si algún nombre de columna no está en allowed_cols."""
+    for col, _ in updates:
+        if col not in allowed_cols:
+            raise ValueError(f"Columna no permitida: {col}")
+    return ", ".join(f"{col} = %s" for col, _ in updates)  # nosec B608
 
 
 def serialize_row(row):
@@ -367,24 +476,6 @@ def migrate_existing_database():
     return None
 
 
-def normalize_level(value):
-    allowed = {"PRINCIPIANTE", "INTERMEDIO", "AVANZADO", "PROFESIONAL"}
-    normalized = str(value or "PRINCIPIANTE").upper()
-    return normalized if normalized in allowed else "PRINCIPIANTE"
-
-
-def normalize_role(value):
-    return "ADMIN" if str(value or "").upper() == "ADMIN" else "SOCIO"
-
-
-def normalize_socio_estado(value):
-    allowed = {"ACTIVO", "BLOQUEADO", "INACTIVO"}
-    normalized = str(value or "ACTIVO").upper()
-    if normalized == "SUSPENDIDO":
-        normalized = "INACTIVO"
-    return normalized if normalized in allowed else "ACTIVO"
-
-
 def _now_local():
     """Hora actual en Ecuador (UTC-5) como datetime naive, independiente del timezone del servidor."""
     return datetime.utcnow() - timedelta(hours=5)
@@ -396,16 +487,6 @@ def within_operating_hours():
     if weekday == 6:
         return False
     if weekday == 5 and now.hour >= 12:
-        return False
-    return True
-
-def is_valid_operating_date(dt):
-    """La fecha elegida (inicio de reserva / salida de préstamo) debe caer
-    en día hábil: lunes–viernes cualquier hora, o sábado antes de las 12:00."""
-    weekday = dt.weekday()  # 0=Lun … 5=Sáb, 6=Dom
-    if weekday == 6:
-        return False
-    if weekday == 5 and dt.hour >= 12:
         return False
     return True
 
@@ -674,9 +755,11 @@ def health():
 def login():
     data = parse_json()
     email = (data.get("email") or "").strip().lower()
-    password = data.get("password") or DEFAULT_PASSWORD
+    password = (data.get("password") or "").strip()
     if not email:
         return error("Correo requerido", 400)
+    if not password:
+        return error("Contraseña requerida", 400)
 
     conn = get_db_connection()
     try:
@@ -707,6 +790,7 @@ def login():
                 "id": socio["id"],
                 "email": socio["email"],
                 "rol": "ADMIN" if is_admin else "SOCIO",
+                "jti": str(uuid.uuid4()),
                 "exp": datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
                 "iat": datetime.utcnow(),
             }
@@ -715,7 +799,7 @@ def login():
             return ok({"user": socio_public(socio), "is_admin": is_admin, "token": token})
     except Exception as exc:
         conn.rollback()
-        print("Login Error:", exc)
+        logger.error("Login Error:", exc_info=True)
         return error("Error interno en el servidor al intentar iniciar sesión", 500)
     finally:
         conn.close()
@@ -732,9 +816,14 @@ def logout():
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.split(" ", 1)[1] if " " in auth_header else ""
     if token:
-        _revoked_tokens.add(token)
-        if len(_revoked_tokens) > 10000:
-            _revoked_tokens.clear()
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            jti = payload.get("jti")
+            exp = payload.get("exp")
+            if jti and exp:
+                _revoke_token(jti, datetime.utcfromtimestamp(exp))
+        except jwt.InvalidTokenError:
+            pass
     return ok({"message": "Sesión cerrada correctamente"})
 
 
@@ -754,7 +843,7 @@ def recover_password():
                 # Respuesta genérica para evitar enumeración de emails
                 return ok({"message": "Si el correo existe, recibirás tu PIN de acceso temporal."}, 200)
             
-            pin = ''.join(random.choices(string.digits, k=6))
+            pin = ''.join(secrets.choice(string.digits) for _ in range(6))
             new_hash = hash_password(pin)
             
             cursor.execute(
@@ -771,7 +860,7 @@ def recover_password():
             return ok({"message": "Se ha enviado un código temporal a tu WhatsApp"})
     except Exception as exc:
         conn.rollback()
-        print("Recover password error:", exc)
+        logger.error("Recover password error:", exc_info=True)
         return error("Error interno al intentar recuperar la contraseña", 500)
     finally:
         conn.close()
@@ -857,7 +946,7 @@ def create_user():
         return error("Ya existe un socio con ese correo", 409)
     except Exception as exc:
         conn.rollback()
-        print("Create User Error:", exc)
+        logger.error("Create User Error:", exc_info=True)
         return error("Error al crear el socio", 400)
     finally:
         conn.close()
@@ -978,13 +1067,15 @@ def user_detail(user_id):
             updates = [(column, transform(data[field])) for field, (column, transform) in mapping.items() if field in data]
             if not updates:
                 return error("No hay campos para actualizar")
-            sql = ", ".join([f"{column} = %s" for column, _ in updates])
-            cursor.execute(f"UPDATE SOCIO SET {sql} WHERE id = %s", [value for _, value in updates] + [user_id])
+            _SOCIO_COLS = {"nombre", "telefono", "nivel_habilidad", "rol", "estado"}
+            sql = _build_safe_set(updates, _SOCIO_COLS)
+            cursor.execute(f"UPDATE SOCIO SET {sql} WHERE id = %s", [value for _, value in updates] + [user_id])  # nosec B608
             conn.commit()
             return ok({"message": "Socio actualizado"})
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        logger.error("Internal error", exc_info=True)
+        return error("Error interno del servidor", 500)
     finally:
         conn.close()
 
@@ -1005,7 +1096,8 @@ def update_avatar():
             return ok({'message': 'Avatar actualizado'})
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        logger.error("Internal error", exc_info=True)
+        return error("Error interno del servidor", 500)
     finally:
         conn.close()
 
@@ -1026,16 +1118,17 @@ def update_my_profile():
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            sql = ", ".join([f"{column} = %s" for column, _ in updates])
+            _PERFIL_COLS = {"telefono", "nivel_habilidad"}
+            sql = _build_safe_set(updates, _PERFIL_COLS)
             cursor.execute(
-                f"UPDATE SOCIO SET {sql} WHERE id = %s", 
+                f"UPDATE SOCIO SET {sql} WHERE id = %s",  # nosec B608
                 [value for _, value in updates] + [request.user["id"]]
             )
             conn.commit()
             return ok({"message": "Perfil actualizado correctamente"})
     except Exception as exc:
         conn.rollback()
-        print("Update profile error:", exc)
+        logger.error("Update profile error:", exc_info=True)
         return error("Error interno al actualizar perfil", 500)
     finally:
         conn.close()
@@ -1073,7 +1166,7 @@ def update_my_password():
             return ok({"message": "Contraseña actualizada correctamente"})
     except Exception as exc:
         conn.rollback()
-        print("Update password error:", exc)
+        logger.error("Update password error:", exc_info=True)
         return error("Error interno al actualizar contraseña", 500)
     finally:
         conn.close()
@@ -1168,7 +1261,7 @@ def create_inventory_item():
             return ok({"message": "Instrumento agregado exitosamente", "id": cursor.lastrowid}, 201)
     except Exception as exc:
         conn.rollback()
-        print("Create Inventory Error:", exc)
+        logger.error("Create Inventory Error:", exc_info=True)
         return error("Error al agregar el instrumento", 400)
     finally:
         conn.close()
@@ -1252,13 +1345,15 @@ def inventory_detail(item_id):
                 updates.append(("estado", nuevo_estado))
 
             updates.append(("modificado_por", data.get("modificado_por", "API")))
-            sql = ", ".join([f"{field} = %s" for field, _ in updates])
-            cursor.execute(f"UPDATE INSTRUMENTO SET {sql} WHERE id = %s", [value for _, value in updates] + [item_id])
+            _INSTRUMENTO_COLS = {"nombre", "tipo_instrumento_id", "marca", "modelo", "numero_serie",
+                                  "estado", "ubicacion", "modificado_por"}
+            sql = _build_safe_set(updates, _INSTRUMENTO_COLS)
+            cursor.execute(f"UPDATE INSTRUMENTO SET {sql} WHERE id = %s", [value for _, value in updates] + [item_id])  # nosec B608
             conn.commit()
             return ok({"message": "Instrumento actualizado"})
     except Exception as exc:
         conn.rollback()
-        print("Update Inventory Error:", exc)
+        logger.error("Update Inventory Error:", exc_info=True)
         return error("Error al actualizar el instrumento", 400)
     finally:
         conn.close()
@@ -1297,7 +1392,7 @@ def rooms_collection():
             return ok(serialize_rows(cursor.fetchall()))
     except Exception as exc:
         conn.rollback()
-        print("Salas Error:", exc)
+        logger.error("Salas Error:", exc_info=True)
         return error("Error interno al procesar la sala", 400)
     finally:
         conn.close()
@@ -1321,13 +1416,14 @@ def room_detail(sala_id):
     conn = get_db_connection()
     try:
         with conn.cursor() as cursor:
-            sql = ", ".join([f"{field} = %s" for field, _ in updates])
-            cursor.execute(f"UPDATE SALA SET {sql} WHERE id = %s", [value for _, value in updates] + [sala_id])
+            _SALA_COLS = {"nombre", "capacidad", "equipamiento", "tipo", "estado"}
+            sql = _build_safe_set(updates, _SALA_COLS)
+            cursor.execute(f"UPDATE SALA SET {sql} WHERE id = %s", [value for _, value in updates] + [sala_id])  # nosec B608
             conn.commit()
             return ok({"message": "Sala actualizada"})
     except Exception as exc:
         conn.rollback()
-        print("Room Update Error:", exc)
+        logger.error("Room Update Error:", exc_info=True)
         return error("Error al actualizar la sala", 400)
     finally:
         conn.close()
@@ -1529,7 +1625,7 @@ def create_reservation():
             return ok({'message': 'Reserva creada exitosamente', 'id': reserva_id, 'whatsapp_enviado': notified}, 201)
     except Exception as exc:
         conn.rollback()
-        print("Create Reservation Error:", exc)
+        logger.error("Create Reservation Error:", exc_info=True)
         return error("Error interno al crear la reserva", 400)
     finally:
         conn.close()
@@ -1649,7 +1745,7 @@ def cancel_reservation(reserva_id):
             return ok({'message': 'Reserva cancelada'})
     except Exception as exc:
         conn.rollback()
-        print('Cancel Reservation Error:', exc)
+        logger.error('Cancel Reservation Error:', exc_info=True)
         return error('Error al cancelar la reserva', 400)
     finally:
         conn.close()
@@ -1873,12 +1969,12 @@ def request_loan():
                         f"✅ Hola {primer_nombre}, se registró tu préstamo de *{instrument['instrumento_nombre']}* hasta el {fecha_str}. ¡Cuídalo bien y devúelvelo a tiempo!",
                     )
             except Exception:
-                pass
+                logger.warning("WhatsApp notification failed for loan %s", loan_id, exc_info=True)
 
             return ok({"message": "Préstamo registrado", "id": loan_id}, 201)
     except Exception as exc:
         conn.rollback()
-        print("Request Loan Error:", exc)
+        logger.error("Request Loan Error:", exc_info=True)
         return error("Error interno al solicitar el préstamo", 400)
     finally:
         conn.close()
@@ -1924,7 +2020,7 @@ def return_loan(prestamo_id):
             return ok({"message": "Préstamo devuelto"})
     except Exception as exc:
         conn.rollback()
-        print("Return Loan Error:", exc)
+        logger.error("Return Loan Error:", exc_info=True)
         return error("Error al registrar la devolución", 400)
     finally:
         conn.close()
@@ -2075,10 +2171,10 @@ def check_overdue_loans():
 
             if vencidos:
                 conn.commit()
-                print(f"Se actualizaron {len(vencidos)} préstamos a estado VENCIDO.")
+                logger.info("Se actualizaron %d préstamos a estado VENCIDO.", len(vencidos))
     except Exception as exc:
         conn.rollback()
-        print("Error en Cron Job check_overdue_loans:", exc)
+        logger.error("Error en Cron Job check_overdue_loans:", exc_info=True)
     finally:
         conn.close()
 
@@ -2116,7 +2212,7 @@ try:
                 if proximas:
                     conn.commit()
         except Exception as exc:
-            print('Error en reminder cron:', exc)
+            logger.error("Error en reminder cron:", exc_info=True)
         finally:
             conn.close()
 
@@ -2147,12 +2243,13 @@ try:
                         if len(_notified_loan_ids) > _MAX_NOTIFIED_CACHE:
                             _notified_loan_ids.clear()
         except Exception as exc:
-            print('Error en reminder préstamos:', exc)
+            logger.error("Error en reminder préstamos:", exc_info=True)
         finally:
             conn.close()
 
     scheduler.add_job(func=check_upcoming_reservations, trigger='interval', minutes=5)
     scheduler.add_job(func=check_upcoming_loans, trigger='interval', minutes=5)
+    scheduler.add_job(func=_cleanup_token_blacklist, trigger='interval', hours=1)
     scheduler.start()
 except ImportError:
     pass
@@ -2438,7 +2535,8 @@ def create_multa():
             return ok({'message': 'Multa registrada', 'id': cursor.lastrowid}, 201)
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        logger.error("Internal error", exc_info=True)
+        return error("Error interno del servidor", 500)
     finally:
         conn.close()
 
@@ -2456,7 +2554,8 @@ def pay_multa(multa_id):
             return ok({'message': 'Multa marcada como pagada'})
     except Exception as exc:
         conn.rollback()
-        return error(str(exc), 400)
+        logger.error("Internal error", exc_info=True)
+        return error("Error interno del servidor", 500)
     finally:
         conn.close()
 
@@ -2499,8 +2598,11 @@ def statistics_loans():
                 "by_instrument": by_instrument
             })
     except Exception as exc:
-        return error(str(exc), 400)
+        logger.error("Internal error", exc_info=True)
+        return error("Error interno del servidor", 500)
     finally:
         conn.close()
 if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=5000)
+    # Solo para depuración local. Producción usa gunicorn (ver Dockerfile).
+    # 0.0.0.0 es necesario dentro de Docker para que nginx pueda alcanzar el contenedor.
+    app.run(debug=False, host="0.0.0.0", port=5000)  # nosec B104

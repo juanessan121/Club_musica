@@ -38,10 +38,10 @@ def test_login_sin_email():
     assert r.status_code in (400, 422)
 
 
-def test_login_sin_password_usa_default():
-    # El API usa DEFAULT_PASSWORD como fallback cuando no se envía contraseña.
+def test_login_sin_password_rechaza():
+    # La contraseña es requerida; omitirla debe devolver 400.
     r = requests.post(f"{BASE_URL}/auth/login", json={"email": ADMIN_EMAIL})
-    assert r.status_code == 200
+    assert r.status_code == 400
 
 
 def test_login_body_vacio():

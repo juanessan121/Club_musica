@@ -1,31 +1,51 @@
-version: '3.8'
-
 # =============================================================================
-# DOCKER-COMPOSE.YML - Sistema Club de Música (Refactorizado)
+# DOCKER-COMPOSE.YML — Sistema Club de Música (DevSecOps Hardened)
 # =============================================================================
 # Autores: Juan Sandoval, Braulio Silva, Javier Herrada
-# Stack: MariaDB + Python Flask API + Node WhatsApp Bridge + React
+# Stack: MariaDB + Python Flask API + Node WhatsApp Bridge + React + Nginx
+#
+# INICIO RÁPIDO (un solo comando):  bash scripts/setup.sh
+#
+# Manual:
+#   1. cp .env.example .env  y rellena las contraseñas/JWT_SECRET
+#   2. bash nginx/gen-cert.sh        (certificado TLS autofirmado de desarrollo)
+#   3. docker compose up --build -d
 # =============================================================================
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SECRETOS — cargados desde .env (nunca commiteado).
+# En producción Linux/Swarm: usar Docker Secrets con _FILE y secrets: block.
+# En Docker Desktop Windows: las variables de entorno son el mecanismo correcto.
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
-  # ==========================================================================
-  # BASE DE DATOS - MariaDB
-  # ==========================================================================
+  # ===========================================================================
+  # BASE DE DATOS — MariaDB
+  # ===========================================================================
   db-mariadb:
     image: mariadb:10.11
     container_name: club-musica-mariadb
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootsecret}
+      # Docker Secrets con _FILE funciona en Linux/Swarm.
+      # En Docker Desktop para Windows se usan variables de entorno directas
+      # cargadas desde .env (nunca commiteado al repo).
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Requerido - define DB_ROOT_PASSWORD en .env}
       MYSQL_DATABASE: ${DB_NAME:-club_musica}
       MYSQL_USER: ${DB_USER:-clubmusica}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-clubmusica_secret_2026}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Requerido - define DB_PASSWORD en .env}
     volumes:
       - mariadb_data:/var/lib/mysql
       - ./schema_musica.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     # Puerto de BD NO expuesto al host — acceso solo interno vía red Docker
     networks:
       - club-musica-network
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+          pids: 100
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
@@ -33,9 +53,9 @@ services:
       retries: 5
       start_period: 30s
 
-  # ==========================================================================
-  # BACKEND API - Python (Flask)
-  # ==========================================================================
+  # ===========================================================================
+  # BACKEND API — Python Flask (endurecido)
+  # ===========================================================================
   api-flask:
     build:
       context: ./api
@@ -47,9 +67,9 @@ services:
       - FLASK_ENV=${FLASK_ENV:-production}
       - DB_HOST=db-mariadb
       - DB_USER=${DB_USER:-clubmusica}
-      - DB_PASSWORD=${DB_PASSWORD:-clubmusica_secret_2026}
       - DB_NAME=${DB_NAME:-club_musica}
-      - JWT_SECRET=${JWT_SECRET:-cambia-este-secreto-en-produccion}
+      - DB_PASSWORD=${DB_PASSWORD:?Requerido - define DB_PASSWORD en .env}
+      - JWT_SECRET=${JWT_SECRET:?Requerido - define JWT_SECRET en .env}
       - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:3001,http://localhost:8088}
       - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -57,8 +77,16 @@ services:
       - SMTP_PASS=${SMTP_PASS:-}
       - SMTP_FROM=${SMTP_FROM:-noreply@universidad.edu}
       - WHATSAPP_BRIDGE_URL=http://whatsapp-bridge:3002
-    volumes:
-      - ./api:/app
+    # ── Endurecimiento del kernel y privilegios ──────────────────────────────
+    security_opt:
+      - no-new-privileges:true   # impide escalación de privilegios vía setuid/setgid
+    cap_drop:
+      - ALL                      # descarta TODAS las capabilities de Linux
+    # Puerto ≥1024 → no se necesita NET_BIND_SERVICE
+    # ── Sistema de archivos de solo lectura ───────────────────────────────────
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777  # gunicorn y Python necesitan /tmp para archivos temporales
     ports:
       - "5000:5000"
     networks:
@@ -66,6 +94,12 @@ services:
     depends_on:
       db-mariadb:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+          pids: 100
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/api/health', timeout=3)\" || exit 1"]
       interval: 15s
@@ -73,27 +107,35 @@ services:
       retries: 3
       start_period: 20s
 
-  # ==========================================================================
-  # WHATSAPP BRIDGE - Node.js (whatsapp-web.js)
-  # ==========================================================================
+  # ===========================================================================
+  # WHATSAPP BRIDGE — Node.js (whatsapp-web.js)
+  # ===========================================================================
   whatsapp-bridge:
     build:
       context: ./whatsapp-bridge
       dockerfile: Dockerfile
     container_name: club-musica-whatsapp-bridge
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       - PORT=3002
     volumes:
+      # DESARROLLO: hot-reload. En producción, eliminar esta línea y dejar solo el código bakeado en la imagen.
       - ./whatsapp-bridge:/app
       - /app/node_modules
-    ports:
-      - "3002:3002"
+    # Puerto NO expuesto al host — solo accesible desde api-flask en red interna Docker
     networks:
       - club-musica-network
     depends_on:
       api-flask:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+          pids: 50
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3002/health"]
       interval: 20s
@@ -101,9 +143,9 @@ services:
       retries: 3
       start_period: 60s
 
-  # ==========================================================================
-  # FRONTEND - React
-  # ==========================================================================
+  # ===========================================================================
+  # FRONTEND — React
+  # ===========================================================================
   web-musica-react:
     build:
       context: ./frontend
@@ -112,14 +154,18 @@ services:
         REACT_APP_API_URL: ${REACT_APP_API_URL:-}
     container_name: club-musica-web-react
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       - REACT_APP_API_URL=${REACT_APP_API_URL:-}
       - PORT=3001
       - CHOKIDAR_USEPOLLING=true
       - WATCHPACK_POLLING=true
+      - NODE_OPTIONS=--max-old-space-size=1024
     ports:
       - "${WEB_PORT:-3001}:3001"
     volumes:
+      # DESARROLLO: hot-reload. En producción, eliminar esta línea y dejar solo el código bakeado en la imagen.
       - ./frontend:/app
       - /app/node_modules
     networks:
@@ -127,29 +173,50 @@ services:
     depends_on:
       api-flask:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1536M
+          pids: 100
 
-  # ==========================================================================
-  # NGINX - Reverse Proxy
-  # ==========================================================================
+  # ===========================================================================
+  # NGINX — Reverse Proxy (endurecido)
+  # ===========================================================================
   nginx-proxy:
     image: nginx:alpine
     container_name: club-musica-nginx
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    # nginx necesita SETUID/SETGID/CHOWN/NET_BIND_SERVICE para su ciclo de vida normal
+    # (master root → fork workers → drop a uid 101). En producción Linux se puede
+    # afinar con cap_drop + cap_add específicos; en Docker Desktop se deja sin drop.
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - certbot_webroot:/var/www/certbot:ro
     ports:
       - "${NGINX_HTTP_PORT:-8088}:80"
+      - "${NGINX_HTTPS_PORT:-8443}:443"
     networks:
       - club-musica-network
     depends_on:
       - api-flask
       - web-musica-react
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+          pids: 50
 
 # =============================================================================
 # VOLUMES & NETWORKS
 # =============================================================================
 volumes:
   mariadb_data:
+  certbot_webroot:
 
 networks:
   club-musica-network:

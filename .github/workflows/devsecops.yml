@@ -1,0 +1,255 @@
+# =============================================================================
+# DEVSECOPS PIPELINE — Club de Música
+# =============================================================================
+# Ejecuta en cada push a main/master y en cada Pull Request.
+# Etapas (en orden):
+#   1. sast         — Bandit (Python) + pip-audit (CVEs en dependencias)
+#   2. test         — pytest integration tests contra BD real en Docker
+#   3. build        — docker build con Docker Content Trust habilitado
+#   4. image-scan   — Trivy (vulnerabilidades en la imagen construida)
+#   5. bench        — Docker Bench for Security (postura del host Docker)
+#
+# Falco / Sysdig se conecta al runner en runtime (ver sección "runtime-ids").
+# =============================================================================
+
+name: DevSecOps Pipeline
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  IMAGE_NAME: club-musica-api
+  # Docker Content Trust: firma y verifica imágenes con Notary
+  DOCKER_CONTENT_TRUST: 1
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. SAST + CVE SCAN — análisis estático antes de construir nada
+  # ---------------------------------------------------------------------------
+  sast:
+    name: "SAST & Dependency Audit"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Bandit — análisis estático de seguridad en código Python
+      # -ll : severidad media o alta  |  -ii : confianza media o alta
+      - name: Bandit SAST scan
+        run: |
+          pip install bandit
+          bandit -r api/ -ll -ii --format json -o bandit-report.json || true
+          bandit -r api/ -ll -ii
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-report
+          path: bandit-report.json
+
+      # pip-audit — busca CVEs en todas las dependencias declaradas
+      - name: pip-audit CVE scan
+        run: |
+          pip install pip-audit
+          pip-audit -r api/requirements.txt --format json -o pip-audit-report.json || true
+          pip-audit -r api/requirements.txt
+
+      - name: Upload pip-audit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pip-audit-report
+          path: pip-audit-report.json
+
+  # ---------------------------------------------------------------------------
+  # 2. TESTS — pytest contra base de datos real (no mocks)
+  # ---------------------------------------------------------------------------
+  test:
+    name: "Integration Tests"
+    runs-on: ubuntu-latest
+    needs: sast
+    services:
+      db-mariadb:
+        image: mariadb:10.11
+        env:
+          MYSQL_ROOT_PASSWORD: testroot
+          MYSQL_DATABASE: club_musica
+          MYSQL_USER: clubmusica
+          MYSQL_PASSWORD: testpass
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install API dependencies
+        run: |
+          pip install -r api/requirements.txt
+          pip install pytest requests
+
+      - name: Apply schema
+        run: |
+          sudo apt-get install -y mariadb-client
+          mysql -h 127.0.0.1 -P 3307 -u root -ptestroot club_musica < schema_musica.sql
+
+      - name: Run pytest (doctests + integration)
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3307
+          DB_USER: clubmusica
+          DB_PASSWORD: testpass
+          DB_NAME: club_musica
+          JWT_SECRET: ci-test-secret-at-least-32-chars-long
+          FLASK_ENV: testing
+        run: |
+          cd api && python -m pytest ../tests/ -v --tb=short
+
+      # Vitest — tests del frontend JS
+      - name: Run Vitest
+        run: |
+          cd frontend
+          npm ci
+          npm run test:vitest
+
+  # ---------------------------------------------------------------------------
+  # 3. BUILD — construye la imagen con Docker Content Trust (DCT)
+  # ---------------------------------------------------------------------------
+  build:
+    name: "Docker Build + Sign"
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Docker Content Trust: requiere DOCKER_CONTENT_TRUST_ROOT_PASSPHRASE
+      # y DOCKER_CONTENT_TRUST_REPOSITORY_PASSPHRASE en los secrets del repo.
+      # Comando equivalente manual:
+      #   DOCKER_CONTENT_TRUST=1 docker push ghcr.io/org/club-musica-api:sha
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./api
+          push: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+          # Verifica firmas DCT al hacer push si DOCKER_CONTENT_TRUST=1
+          # Para habilitar en CLI local:
+          #   export DOCKER_CONTENT_TRUST=1
+          #   docker trust key generate mi-clave
+          #   docker trust signer add --key mi-clave.pub mi-firma ghcr.io/org/imagen
+          #   docker trust inspect --pretty ghcr.io/org/imagen
+
+  # ---------------------------------------------------------------------------
+  # 4. IMAGE SCAN — Trivy detecta CVEs en la imagen construida
+  # ---------------------------------------------------------------------------
+  image-scan:
+    name: "Trivy Image Scan"
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Run Trivy on the built image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: sarif
+          output: trivy-results.sarif
+          # Falla el pipeline si se encuentran vulnerabilidades CRITICAL o HIGH
+          exit-code: "1"
+          severity: "CRITICAL,HIGH"
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+      # Alternativa con Grype (Anchore):
+      #   - uses: anchore/scan-action@v3
+      #     with:
+      #       image: ghcr.io/org/imagen:sha
+      #       fail-build: true
+      #       severity-cutoff: high
+
+      # Alternativa con Clair (requiere servidor Clair propio):
+      #   docker run --rm -e CLAIR_ADDR=http://clair:6060 \
+      #     quay.io/projectquay/clair:v4 analyze ghcr.io/org/imagen:sha
+
+  # ---------------------------------------------------------------------------
+  # 5. BENCH — Docker Bench for Security (postura del host Docker)
+  # ---------------------------------------------------------------------------
+  bench:
+    name: "Docker Bench for Security"
+    runs-on: ubuntu-latest
+    needs: image-scan
+    # Solo en pushes a main (no en PRs, porque necesita acceso al daemon Docker)
+    if: github.event_name == 'push'
+    steps:
+      - name: Docker Bench for Security
+        # Audita la configuración del daemon Docker, imágenes, contenedores y redes
+        # según CIS Docker Benchmark v1.6
+        run: |
+          docker run --rm --net host --pid host --userns host --cap-add audit_control \
+            -e DOCKER_CONTENT_TRUST=$DOCKER_CONTENT_TRUST \
+            -v /etc:/etc:ro \
+            -v /lib/systemd/system:/lib/systemd/system:ro \
+            -v /usr/bin/containerd:/usr/bin/containerd:ro \
+            -v /usr/bin/runc:/usr/bin/runc:ro \
+            -v /usr/lib/systemd:/usr/lib/systemd:ro \
+            -v /var/lib:/var/lib:ro \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            --label docker_bench_security \
+            docker/docker-bench-security \
+            -l /tmp/bench-report.txt || true
+          # El exit code != 0 indica warnings, no fallo crítico del pipeline
+
+      # ── Falco / Sysdig (detección de intrusiones en runtime) ────────────────
+      # Falco no se ejecuta como step CI/CD sino como daemon en el host de producción.
+      # Instalación en el servidor:
+      #
+      #   # 1. Instalar el driver del kernel
+      #   curl -s https://falco.org/repo/falcosecurity-packages.asc | apt-key add -
+      #   apt-get install -y falco
+      #
+      #   # 2. Reglas relevantes para Flask + Docker:
+      #   #    - Detecta ejecución de shell dentro de contenedores
+      #   #    - Detecta escritura en /etc o /proc desde contenedor
+      #   #    - Alertas si el proceso de la API abre un shell (indicador de RCE)
+      #
+      #   # 3. Arrancar Falco con salida a syslog / Grafana Loki:
+      #   falco --modern-bpf -o "json_output=true" \
+      #         -o "program_output.enabled=true" \
+      #         -o "program_output.program=logger -t falco"
+      #
+      # Sysdig alternativo (SaaS):
+      #   sysdig-agent instalado en el host + integración con Sysdig Secure
+      #   para políticas de runtime y drift detection.

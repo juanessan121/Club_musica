@@ -1,0 +1,26 @@
+# Secretos y config local
+.env
+.env.*
+*.env
+
+# Control de versiones
+.git
+.gitignore
+
+# Tests y cobertura
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docs y scripts de desarrollo
+*.md
+*.txt

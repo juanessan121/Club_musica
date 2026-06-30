@@ -26,6 +26,7 @@ DROP TABLE IF EXISTS Salas;
 DROP TABLE IF EXISTS Inventario;
 DROP TABLE IF EXISTS Users;
 
+DROP TABLE IF EXISTS TOKEN_BLACKLIST;
 DROP TABLE IF EXISTS AUDITORIA_INSTRUMENTO;
 DROP TABLE IF EXISTS AUDITORIA_PRESTAMO;
 DROP TABLE IF EXISTS AUDITORIA_RESERVA;
@@ -267,6 +268,16 @@ CREATE TABLE AUDITORIA_INSTRUMENTO (
     usuario_responsable VARCHAR(50) NOT NULL,
     INDEX idx_aud_instrumento (instrumento_id),
     INDEX idx_aud_instrumento_fecha (fecha_cambio)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- JWT Token Blacklist: tokens revocados en logout, persistidos en BD para sobrevivir reinicios.
+-- El cron de la API limpia entradas expiradas cada hora.
+CREATE TABLE TOKEN_BLACKLIST (
+    jti        CHAR(36)  NOT NULL,
+    expires_at DATETIME  NOT NULL,
+    revoked_at DATETIME  NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (jti),
+    INDEX idx_tbl_expires (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 DELIMITER //

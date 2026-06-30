@@ -61,6 +61,12 @@ build/
 whatsapp-bridge/.wwebjs_auth/
 whatsapp-bridge/.wwebjs_cache/
 
+# Certificados SSL (nunca al repo)
+nginx/ssl/
+
+# Docker Secrets — archivos con credenciales reales generados por scripts/init-secrets.sh
+secrets/*.txt
+
 # Scripts de parche temporales
 patch*.py
 clean_patch.py
