@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   CalendarDays,
-  CheckCircle2,
   DoorOpen,
   Gauge,
   Guitar,
@@ -10,7 +9,6 @@ import {
   PackageCheck,
   Plus,
   Users,
-  XCircle,
   BarChart3,
 } from 'lucide-react';
 
@@ -23,6 +21,8 @@ import es from 'date-fns/locale/es';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 
 import StatisticsView from './StatisticsView';
+import { formatDate, isWithinOperatingHours, isValidOperatingDate, OPERATING_DATE_ERROR, OPERATING_DATE_WARNING_STYLE } from './utils';
+import { Badge, Field, TextInput, SelectInput, Message } from './components';
 
 const locales = {
   'es': es,
@@ -100,46 +100,6 @@ const emptySala = {
   estado: 'ACTIVA',
 };
 
-function Badge({ value }) {
-  const key = String(value || 'default').toLowerCase();
-  return <span className={`badge badge-${key}`}>{value || 'N/D'}</span>;
-}
-
-function Field({ label, children }) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function TextInput(props) {
-  return <input className="input" {...props} />;
-}
-
-function SelectInput(props) {
-  return <select className="input" {...props} />;
-}
-
-function Message({ message }) {
-  if (!message.text) return null;
-  const Icon = message.type === 'success' ? CheckCircle2 : XCircle;
-  return (
-    <div className={`message ${message.type}`}>
-      <Icon size={18} />
-      <span>{message.text}</span>
-    </div>
-  );
-}
-
-function formatDate(value) {
-  if (!value) return 'Sin fecha';
-  const s = value.replace('T', ' ').slice(0, 16);
-  const [datePart, timePart] = s.split(' ');
-  if (!timePart || timePart === '00:00') return datePart;
-  return `${datePart} ${timePart}`;
-}
 
 function CountdownTimer({ fechaLimite }) {
   const [timeLeft, setTimeLeft] = useState('');
@@ -168,35 +128,6 @@ function CountdownTimer({ fechaLimite }) {
   );
 }
 
-function isWithinOperatingHours() {
-  const now = new Date();
-  const day = now.getDay(); // 0=Dom, 1=Lun … 6=Sáb
-  if (day === 0) return false;
-  if (day === 6 && now.getHours() >= 12) return false;
-  return true;
-}
-
-function isValidOperatingDate(dateStr) {
-  if (!dateStr) return true;
-  // datetime-local strings (YYYY-MM-DDTHH:MM) are parsed as local time — no UTC shift
-  const d = new Date(dateStr.length === 10 ? `${dateStr}T12:00:00` : dateStr);
-  const day = d.getDay(); // 0=Dom, 6=Sáb
-  if (day === 0) return false;
-  if (day === 6 && d.getHours() >= 12) return false;
-  return true;
-}
-
-const OPERATING_DATE_ERROR = 'No se permiten reservas ni préstamos en domingo ni sábado a partir de las 12:00.';
-const OPERATING_DATE_WARNING_STYLE = {
-  background: '#fef2f2',
-  border: '1.5px solid #ef4444',
-  borderRadius: '8px',
-  padding: '8px 12px',
-  color: '#b91c1c',
-  fontSize: '0.82rem',
-  fontWeight: 600,
-  marginTop: '4px',
-};
 
 function OperatingHoursAlert() {
   const now = new Date();
